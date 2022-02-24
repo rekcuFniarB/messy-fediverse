@@ -1,0 +1,14 @@
+virtualenv
+virtualenv_3.6
+**/__pycache__
+*.pyc
+*.sqlite3
+*.kate-swp
+*.bak
+*.orig
+*.gz
+*.bzip2
+*.bzip
+*.xz
+*.pyc
+*.pyo

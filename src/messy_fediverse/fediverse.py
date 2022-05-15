@@ -79,7 +79,7 @@ class Fediverse:
                     kwargs['headers'] = {}
                 request_date = emailutils.format_datetime(datetime.fromisoformat(kwargs['json']['object']['published'])).replace(' -0000', ' GMT')
                 kwargs['headers']['Date'] = request_date
-                kwargs['headers']['Digest'] = 'sha-256=' + sha256(json.dumps(kwargs['json']).encode('utf-8'))
+                kwargs['headers']['Digest'] = 'sha-256=' + sha256(json.dumps(kwargs['json']).encode('utf-8')).hexdigest()
                 kwargs['headers']['Signature'] = self.sign(url, kwargs['headers'])
         
         r = requests.post(url, *args, **kwargs)

@@ -77,8 +77,8 @@ class Fediverse:
                 if 'headers' not in kwargs:
                     kwargs['headers'] = {}
                 request_date = emailutils.format_datetime(datetime.fromisoformat(kwargs['json']['object']['published']))
-                kwargs['headers']['signature'] = self.sign(url, request_date)
-                kwargs['headers']['date'] = request_date
+                kwargs['headers']['Signature'] = self.sign(url, request_date)
+                kwargs['headers']['Date'] = request_date
         
         r = requests.post(url, *args, **kwargs)
         if not r.ok:

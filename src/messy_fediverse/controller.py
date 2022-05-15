@@ -43,10 +43,10 @@ def fediverse_factory(request):
             proto = 'https'
         
         headers = {
-            'referer': f'{proto}://{request.site.domain}/',
-            'content-type': 'application/activity+json',
-            'user-agent': f'{proto}://{request.site.domain}',
-            'accept': 'application/activity+json, application/json'
+            'Referer': f'{proto}://{request.site.domain}/',
+            'Content-Type': 'application/activity+json',
+            'User-Agent': f'{proto}://{request.site.domain}',
+            'Accept': 'application/activity+json, application/json'
         }
         
         user = {

@@ -1,0 +1,27 @@
+{
+    "aliases": [
+        "https://example.com/social/"
+    ],
+    "links": [
+        {
+            "href": "https://example.com/social/",
+            "rel": "http://webfinger.net/rel/profile-page",
+            "type": "text/html"
+        },
+        {
+            "href": "https://example.com/social/",
+            "rel": "self",
+            "type": "application/activity+json"
+        },
+        {
+            "href": "https://example.com/social/",
+            "rel": "self",
+            "type": "application/ld+json; profile=\"https://www.w3.org/ns/activitystreams\""
+        },
+        {
+            "rel": "http://ostatus.org/schema/1.0/subscribe",
+            "template": "https://example.com/social/interact/?acct={uri}"
+        }
+    ],
+    "subject": "acct:username@example.com"
+}

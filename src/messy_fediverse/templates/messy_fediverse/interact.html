@@ -1,0 +1,14 @@
+
+<h1>Interact:</h1>
+
+{% autoescape off %}
+{{ content }}
+{% endautoescape %}
+
+<form method="post" action=".">
+    {% csrf_token %}
+
+    {{ form.as_p }}
+    
+    <p><input type="submit" value="Send"></p>
+</form>

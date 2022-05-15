@@ -41,7 +41,7 @@ class Fediverse:
                 kwargs['headers'] = headers
             
             if url.endswith('.json.json'):
-                url = url.replace('.json.json', '.json')
+                url = url[:-len('.json')]
             
             r = requests.get(url, *args, **kwargs)
             if not r.ok:
@@ -57,6 +57,12 @@ class Fediverse:
         return data
     
     def post(self, url, *args, **kwargs):
+        '''
+        Make POST request to fediverse server
+        url: string URL
+        Accepts same args as requests's module "post" method.
+        '''
+        
         if self.__headers is not None:
             headers = self.__headers.copy()
             if 'headers' in kwargs:
@@ -64,14 +70,15 @@ class Fediverse:
             kwargs['headers'] = headers
         
         if url.endswith('.json.json'):
-            url = url.replace('.json.json', '.json')
+            url = url[:-len('.json')]
         
         if 'json' in kwargs and type(kwargs['json']) is dict:
             if 'object' in kwargs['json'] and 'published' in kwargs['json']['object']:
                 if 'headers' not in kwargs:
                     kwargs['headers'] = {}
-                kwargs['headers']['signature'] = self.sign(url, datetime.fromisoformat(kwargs['json']['object']['published']))
-                #kwargs['json']['object']['published'] = kwargs['json']['object']['published'].isoformat(timespec='seconds')
+                request_date = emailutils.format_datetime(datetime.fromisoformat(kwargs['json']['object']['published']))
+                kwargs['headers']['signature'] = self.sign(url, request_date)
+                kwargs['headers']['date'] = request_date
         
         r = requests.post(url, *args, **kwargs)
         if not r.ok:
@@ -84,6 +91,12 @@ class Fediverse:
         return data
     
     def reply(self, source, message):
+        '''
+        Send "reply" request to remote fediverse server.
+        source: dict, sending source information.
+        message: string
+        Returns string or dict if response was JSON.
+        '''
         remote_author = self.get(source['attributedTo'] + '.json')
         
         uniqid = self.uniqid()
@@ -111,11 +124,16 @@ class Fediverse:
         return data
     
     def sign(self, url, date):
+        '''
+        Make fediverse signature.
+        url: string URL
+        date: string date in email format.
+        '''
         parsed_url = urlparse(url)
         str2sign = '\n'.join((
             f'(request-target): post {parsed_url.path}',
             f'host: {parsed_url.netloc}',
-            f'date: {emailutils.formatdate(date.timestamp())}'
+            f'date: {date}'
         ))
         pkey = crypto.load_privatekey(crypto.FILETYPE_PEM, self.__privkey)
         sign = base64.b64encode(crypto.sign(pkey, str2sign, 'sha256'))

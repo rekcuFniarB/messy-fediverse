@@ -4,8 +4,9 @@ from datetime import datetime
 import json
 from urllib.parse import urlparse
 from email import utils as emailutils
-import base64
+from base64 import b64encode
 from OpenSSL import crypto
+from hashlib import sha256
 
 class Fediverse:
     def __init__(self, user, privkey, pubkey, headers=None, cache=None):
@@ -76,13 +77,20 @@ class Fediverse:
             if 'object' in kwargs['json'] and 'published' in kwargs['json']['object']:
                 if 'headers' not in kwargs:
                     kwargs['headers'] = {}
-                request_date = emailutils.format_datetime(datetime.fromisoformat(kwargs['json']['object']['published']))
-                kwargs['headers']['Signature'] = self.sign(url, request_date)
+                request_date = emailutils.format_datetime(datetime.fromisoformat(kwargs['json']['object']['published'])).replace(' -0000', ' GMT')
                 kwargs['headers']['Date'] = request_date
+                kwargs['headers']['Digest'] = 'sha-256=' + sha256(json.dumps(kwargs['json']).encode('utf-8'))
+                kwargs['headers']['Signature'] = self.sign(url, kwargs['headers'])
         
         r = requests.post(url, *args, **kwargs)
         if not r.ok:
-            r.raise_for_status()
+            try:
+                r.raise_for_status()
+            except BaseException as e:
+                if r.content and e.args:
+                    e.args = (*e.args, r.content.decode('utf-8'))
+                raise e
+        
         if 'application/' in r.headers['content-type'] and 'json' in r.headers['content-type']:
             data = r.json()
         else:
@@ -123,7 +131,7 @@ class Fediverse:
         data['result'] = self.post(remote_author['endpoints']['sharedInbox'], json=data)
         return data
     
-    def sign(self, url, date):
+    def sign(self, url, headers):
         '''
         Make fediverse signature.
         url: string URL
@@ -133,8 +141,9 @@ class Fediverse:
         str2sign = '\n'.join((
             f'(request-target): post {parsed_url.path}',
             f'host: {parsed_url.netloc}',
-            f'date: {date}'
+            f'date: {headers["Date"]}',
+            f'digest: {headers["Digest"]}'
         ))
         pkey = crypto.load_privatekey(crypto.FILETYPE_PEM, self.__privkey)
-        sign = base64.b64encode(crypto.sign(pkey, str2sign, 'sha256'))
-        return f'keyId="{self.user["publicKey"]["id"]}",headers="(request-target) host date", signature="{sign}"'
+        sign = b64encode(crypto.sign(pkey, str2sign, 'sha256')).decode('utf-8')
+        return f'keyId="{self.user["publicKey"]["id"]}",headers="(request-target) host date digest", signature="{sign}"'

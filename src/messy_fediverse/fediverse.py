@@ -81,7 +81,7 @@ class Fediverse:
                 kwargs['data'] = json.dumps(kwargs['json'])
                 del(kwargs['json'])
                 kwargs['headers']['Date'] = request_date
-                kwargs['headers']['Digest'] = 'sha-256=' + sha256(kwargs['data'].encode('utf-8')).hexdigest()
+                kwargs['headers']['Digest'] = 'sha-256=' + b64encode(sha256(kwargs['data'].encode('utf-8')).digest()).decode('utf-8')
                 kwargs['headers']['Signature'] = self.sign(url, kwargs['headers'])
         
         r = requests.post(url, *args, **kwargs)

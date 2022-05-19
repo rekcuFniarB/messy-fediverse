@@ -94,9 +94,12 @@ class Fediverse:
                 raise e
         
         if 'application/' in r.headers['content-type'] and 'json' in r.headers['content-type']:
-            data = r.json()
+            try:
+                data = r.json()
+            except:
+                data = r.text
         else:
-            data = r.content
+            data = r.text
         
         return data
     

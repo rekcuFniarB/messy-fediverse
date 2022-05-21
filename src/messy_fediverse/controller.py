@@ -132,12 +132,10 @@ def auth_token(request):
 @csrf_exempt
 def status(request, rpath):
     filepath = path.join(settings.MEDIA_ROOT, request.path.strip('/') + '.json')
-    print('STATUS:', request.path, filepath)
     if not path.isfile(filepath):
         raise Http404(f'Status {path} not found.')
-    print('IS 404?')
+    
     if is_json_request(request):
-        print('REDIRECT:', path.join(settings.MEDIA_URL, request.path.strip('/') + '.json'))
         return redirect(path.join(settings.MEDIA_URL, request.path.strip('/') + '.json'))
     
     data = {}
@@ -145,7 +143,12 @@ def status(request, rpath):
     with open(filepath, 'rt', encoding='utf-8') as f:
         data = json.load(f)
     
-    return render(request, 'messy/fediverse/status.html', data)
+    if request.user.is_staff:
+        return render(request, 'messy/fediverse/status.html', data)
+    elif 'object' in data and 'inReplyTo' in data['object']:
+        return redirect(data['object']['inReplyTo'])
+    else:
+        raise Http404(f'Status {path} not found.')
 
 def save(filename, data):
     ## Fixing filename

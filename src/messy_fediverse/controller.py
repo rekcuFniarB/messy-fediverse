@@ -6,6 +6,7 @@ from django.core.exceptions import PermissionDenied, BadRequest
 from django.core.cache import cache
 from django.core.mail import mail_admins
 from django.views import View
+from django.views.decorators.csrf import csrf_exempt
 from .forms import InteractForm
 from .fediverse import Fediverse
 import requests
@@ -99,6 +100,7 @@ def fediverse_factory(request):
         )
     return __cache__['fediverse']
 
+@csrf_exempt
 def main(request):
     if is_json_request(request):
         return root_json(request)
@@ -110,18 +112,23 @@ def root_json(request):
     response.headers['Content-Type'] = 'application/activity+json'
     return response
 
+@csrf_exempt
 def inbox(request):
     return JsonResponse({'success': log_request(request)})
 
+@csrf_exempt
 def outbox(request):
     return JsonResponse({'success': log_request(request)})
 
+@csrf_exempt
 def auth(request):
     return JsonResponse({'success': log_request(request)})
 
+@csrf_exempt
 def auth_token(request):
     return JsonResponse({'success': log_request(request)})
 
+@csrf_exempt
 def status(request, rpath):
     filepath = path.join(settings.MEDIA_ROOT, request.path.strip('/') + '.json')
     print('STATUS:', request.path, filepath)

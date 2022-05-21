@@ -14,4 +14,5 @@ urlpatterns = [
     path('/api/auth/token/', controller.auth_token, name='auth-token'),
     path('/interact/', controller.Interact.as_view(), name='interact'),
     path('/status/<path:rpath>/', controller.status, name='status'),
+    path('/<path:rpath>/', controller.dumb, name='dump')
 ]

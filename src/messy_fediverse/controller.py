@@ -61,7 +61,7 @@ def fediverse_factory(request):
             "alsoKnownAs": [],
             "attachment": [],
             "capabilities": {
-                "acceptsChatMessages": True
+                "acceptsChatMessages": False
             },
             "discoverable": False,
             "endpoints": {
@@ -71,9 +71,9 @@ def fediverse_factory(request):
                 "sharedInbox": f"{proto}://{request.site.domain}{reverse('messy-fediverse:inbox')}",
                 #"uploadMedia": f"{proto}://{request.site.domain}/social/upload_media/"
             },
-            #"featured": f"{proto}://{request.site.domain}/social/featured/",
-            #"followers": f"{proto}://{request.site.domain}/social/followers/",
-            #"following": f"{proto}://{request.site.domain}/social/following/",
+            "featured": f"{proto}://{request.site.domain}/social/featured/",
+            "followers": f"{proto}://{request.site.domain}/social/followers/",
+            "following": f"{proto}://{request.site.domain}/social/following/",
             "id": f"{proto}://{request.site.domain}{reverse('messy-fediverse:root')}",
             "inbox": f"{proto}://{request.site.domain}{reverse('messy-fediverse:inbox')}",
             "manuallyApprovesFollowers": False,
@@ -127,6 +127,10 @@ def auth(request):
 
 @csrf_exempt
 def auth_token(request):
+    return JsonResponse({'success': log_request(request)})
+
+@csrf_exempt
+def dumb(request, *args, **kwargs):
     return JsonResponse({'success': log_request(request)})
 
 @csrf_exempt

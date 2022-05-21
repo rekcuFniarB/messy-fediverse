@@ -87,7 +87,13 @@ class Fediverse:
             if 'object' in kwargs['json'] and 'published' in kwargs['json']['object']:
                 if 'headers' not in kwargs:
                     kwargs['headers'] = {}
-                request_date = emailutils.format_datetime(datetime.fromisoformat(kwargs['json']['object']['published'])).replace(' -0000', ' GMT')
+                
+                pub_datetime = kwargs['json']['object']['published']
+                ## Removind zulu timezone indicator from the end of string
+                if pub_datetime.endswith('Z'):
+                    pub_datetime = pub_datetime[:-1]
+                
+                request_date = emailutils.format_datetime(datetime.fromisoformat(pub_datetime)).replace(' -0000', ' GMT')
                 kwargs['data'] = json.dumps(kwargs['json'])
                 del(kwargs['json'])
                 kwargs['headers']['Date'] = request_date

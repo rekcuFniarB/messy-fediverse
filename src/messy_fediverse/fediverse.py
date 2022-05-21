@@ -135,7 +135,7 @@ class Fediverse:
             "object": {
                 "id": path.join(self.user['id'], 'status', datepath, uniqid, ''),
                 "type": "Note",
-                "published": now.isoformat(timespec='seconds'),
+                "published": now.isoformat(timespec='seconds') + 'Z',
                 "attributedTo": self.user['id'],
                 "inReplyTo": source['id'],
                 "content": message,

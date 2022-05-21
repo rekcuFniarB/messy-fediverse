@@ -33,12 +33,14 @@ def is_json_request(request):
 
 def log_request(request):
     return mail_admins(
-        subject=f'SOCIAL REQUEST: {request.path}',
+        subject=f'SOCIAL {request.method} REQUEST: {request.path}',
         fail_silently=not settings.DEBUG,
         message=f'''
-        GET: {request.META['QUERY_STRING']},
+        GET: {request.META['QUERY_STRING']}
         
-        POST: {request.POST.__str__()},
+        POST: {request.POST.__str__()}
+        
+        META: {request.META.__str__()}
         
         BODY: {request.body}
         '''

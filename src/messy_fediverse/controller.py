@@ -39,7 +39,7 @@ def log_request(request):
 
 def fediverse_factory(request):
     if 'fediverse' not in __cache__:
-        proto = 'http'
+        proto = 'https' ## FIXME probably they don't accept non https
         if request.is_secure():
             proto = 'https'
         
@@ -108,6 +108,7 @@ def main(request):
         return redirect('/')
 
 def root_json(request):
+    log_request(request)
     response = JsonResponse(fediverse_factory(request).user)
     response.headers['Content-Type'] = 'application/activity+json'
     return response

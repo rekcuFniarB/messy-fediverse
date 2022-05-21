@@ -151,4 +151,4 @@ class Fediverse:
         ))
         pkey = crypto.load_privatekey(crypto.FILETYPE_PEM, self.__privkey)
         sign = b64encode(crypto.sign(pkey, str2sign, 'sha256')).decode('utf-8')
-        return f'keyId="{self.user["publicKey"]["id"]}",headers="(request-target) host date digest", signature="{sign}"'
+        return f'keyId="{self.user["publicKey"]["id"]}",algorithm="rsa-sha256",headers="(request-target) host date digest", signature="{sign}"'

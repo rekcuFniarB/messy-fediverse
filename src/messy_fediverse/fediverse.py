@@ -45,12 +45,22 @@ class Fediverse:
                 url = url[:-len('.json')]
             
             r = requests.get(url, *args, **kwargs)
+            
             if not r.ok:
-                r.raise_for_status()
+                try:
+                    r.raise_for_status()
+                except BaseException as e:
+                    if r.text and e.args:
+                        e.args = (*e.args, r.text)
+                    raise e
+            
             if 'application/' in r.headers['content-type'] and 'json' in r.headers['content-type']:
-                data = r.json()
+                try:
+                    data = r.json()
+                except:
+                    data = r.text
             else:
-                data = r.content
+                data = r.text
             
             if self.__cache is not None and data:
                 self.__cache.set(url, data)
@@ -110,7 +120,7 @@ class Fediverse:
         message: string
         Returns string or dict if response was JSON.
         '''
-        remote_author = self.get(source['attributedTo'] + '.json')
+        remote_author = self.get(source['attributedTo'])
         
         uniqid = self.uniqid()
         now = datetime.now()

@@ -66,15 +66,13 @@ def fediverse_factory(request):
             "discoverable": False,
             "endpoints": {
                 "oauthAuthorizationEndpoint": f"{proto}://{request.site.domain}{reverse('messy-fediverse:auth')}",
-                #"oauthRegistrationEndpoint": f"{proto}://{request.site.domain}/social/api/apps/",
+                "oauthRegistrationEndpoint": f"{proto}://{request.site.domain}/social/api/apps/",
                 "oauthTokenEndpoint": f"{proto}://{request.site.domain}{reverse('messy-fediverse:auth-token')}",
                 "sharedInbox": f"{proto}://{request.site.domain}{reverse('messy-fediverse:inbox')}",
-                #"uploadMedia": f"{proto}://{request.site.domain}/social/upload_media/"
+                "uploadMedia": f"{proto}://{request.site.domain}/social/upload_media/"
             },
-            "notFeatured": f"{proto}://{request.site.domain}/social/featured/",
+            "notFeatured": f"{proto}://{request.site.domain}/social/notfeatured/",
             "featured": {
-                "@context": "https://www.w3.org/ns/activitystreams",
-                "id": f"{proto}://{request.site.domain}{reverse('messy-fediverse:dumb', kwargs={'rpath':'featured'})}",
                 "type":"OrderedCollection",
                 "totalItems":0,
                 "orderedItems":[]

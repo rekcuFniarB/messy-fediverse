@@ -71,7 +71,14 @@ def fediverse_factory(request):
                 "sharedInbox": f"{proto}://{request.site.domain}{reverse('messy-fediverse:inbox')}",
                 #"uploadMedia": f"{proto}://{request.site.domain}/social/upload_media/"
             },
-            "featured": f"{proto}://{request.site.domain}/social/featured/",
+            "notFeatured": f"{proto}://{request.site.domain}/social/featured/",
+            "featured": {
+                "@context": "https://www.w3.org/ns/activitystreams",
+                "id": f"{proto}://{request.site.domain}{reverse('messy-fediverse:dumb', kwargs={'rpath':'featured'})}",
+                "type":"OrderedCollection",
+                "totalItems":0,
+                "orderedItems":[]
+            },
             "followers": f"{proto}://{request.site.domain}/social/followers/",
             "following": f"{proto}://{request.site.domain}/social/following/",
             "id": f"{proto}://{request.site.domain}{reverse('messy-fediverse:root')}",

@@ -148,7 +148,10 @@ class Fediverse:
             "id": path.join(self.__user__['id'], 'activity', datepath, uniqid, ''),
             "type": "Create",
             "actor": self.__user__['id'],
-            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+            "to": [
+                source.get('attributedTo', None),
+                "https://www.w3.org/ns/activitystreams#Public"
+            ],
             "cc": [],
             
             "object": {
@@ -158,7 +161,10 @@ class Fediverse:
                 "attributedTo": self.__user__['id'],
                 "inReplyTo": source['id'],
                 "content": message,
-                "to": ["https://www.w3.org/ns/activitystreams#Public"],
+                "to": [
+                    source.get('attributedTo', None),
+                    "https://www.w3.org/ns/activitystreams#Public"
+                ],
                 "cc": []
             }
         }

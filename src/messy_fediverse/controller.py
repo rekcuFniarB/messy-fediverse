@@ -42,7 +42,7 @@ def log_request(request):
         
         META: {request.META.__str__()}
         
-        BODY: {request.body}
+        BODY: {request.body.decode('utf-8', 'replace')}
         '''
     )
 
@@ -55,14 +55,14 @@ def fediverse_factory(request):
         headers = {
             'Referer': f'{proto}://{request.site.domain}/',
             'Content-Type': 'application/activity+json',
-            'User-Agent': f'{proto}://{request.site.domain}',
-            'Accept': 'application/activity+json, application/json'
+            'User-Agent': f'Messy Fediverse Instance +{proto}://{request.site.domain}',
+            'Accept': 'application/activity+json, application/ld+json, application/json'
         }
         
         user = {
             "@context": [
                 "https://www.w3.org/ns/activitystreams",
-                "https://w3id.org/security/v1",
+                #"https://w3id.org/security/v1",
                 staticurl(request, 'messy/fediverse/usercontext.json'),
                 #f"{proto}://{request.site.domain}/schemas/litepub-0.1.jsonld",
                 {
@@ -83,12 +83,12 @@ def fediverse_factory(request):
                 "sharedInbox": f"{proto}://{request.site.domain}{reverse('messy-fediverse:inbox')}",
                 "uploadMedia": f"{proto}://{request.site.domain}/social/upload_media/"
             },
-            "notFeatured": f"{proto}://{request.site.domain}/social/notfeatured/",
-            "featured": {
-                "type":"OrderedCollection",
-                "totalItems":0,
-                "orderedItems":[]
-            },
+            "featured": f"{proto}://{request.site.domain}{reverse('messy-fediverse:featured')}",
+            #"featured": {
+            #    "type":"OrderedCollection",
+            #    "totalItems":0,
+            #    "orderedItems":[]
+            #},
             "followers": f"{proto}://{request.site.domain}/social/followers/",
             "following": f"{proto}://{request.site.domain}/social/following/",
             "id": f"{proto}://{request.site.domain}{reverse('messy-fediverse:root')}",
@@ -150,6 +150,18 @@ def auth_token(request):
 @csrf_exempt
 def dumb(request, *args, **kwargs):
     return JsonResponse({'success': log_request(request)})
+
+@csrf_exempt
+def featured(request, *args, **kwargs):
+    response = JsonResponse({
+        "@context": "https://www.w3.org/ns/activitystreams",
+        "id": "https://mastodon.social/users/pashaonesided/collections/featured",
+        "type": "OrderedCollection",
+        "totalItems": 0,
+        "orderedItems": []
+    })
+    response.headers['Content-Type'] = 'application/activity+json'
+    return response
 
 @csrf_exempt
 def status(request, rpath):

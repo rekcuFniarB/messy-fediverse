@@ -138,6 +138,7 @@ class Fediverse:
         Returns string or dict if response was JSON.
         '''
         remote_author = self.get(source['attributedTo'])
+        remote_author_url = urlparse(remote_author['id'])
         
         uniqid = self.uniqid()
         now = datetime.now()
@@ -150,10 +151,26 @@ class Fediverse:
             #    staticurl(request, 'messy/fediverse/usercontext.json'),
             #    {"@language": "und"}
             #],
-            "@context": self.user.get('@context'),
+            
+            #"@context": self.user.get('@context'),
+            
+            "@context": [
+                "https://www.w3.org/ns/activitystreams",
+                {
+                    "ostatus": "http://ostatus.org#",
+                    "atomUri": "ostatus:atomUri",
+                    "inReplyToAtomUri": "ostatus:inReplyToAtomUri",
+                    "conversation": "ostatus:conversation",
+                    "sensitive": "as:sensitive",
+                    "toot": "http://joinmastodon.org/ns#",
+                    "votersCount": "toot:votersCount"
+                }
+            ],
+            
             "id": path.join(self.__user__['id'], 'activity', datepath, uniqid, ''),
             "type": "Create",
             "actor": self.__user__['id'],
+            "published": now.isoformat() + 'Z',
             "to": [
                 source.get('attributedTo', None),
                 "https://www.w3.org/ns/activitystreams#Public"
@@ -161,21 +178,25 @@ class Fediverse:
             "cc": [],
             "directMessage": False,
             ## FIXME WTF
+            ## https://socialhub.activitypub.rocks/t/context-vs-conversation/578/4
             #"context": "tag:mastodon.ml,2022-05-21:objectId=9633346:objectType=Conversation",
             #"context_id": 2320494,
+            "context": source.get('context', None),
             
             "object": {
                 "id": path.join(self.__user__['id'], 'status', datepath, uniqid, ''),
                 "type": "Note",
                 "actor": self.__user__['id'],
                 "url": path.join(self.__user__['id'], 'status', datepath, uniqid, ''),
-                "published": now.isoformat(timespec='seconds') + 'Z',
+                "published": now.isoformat() + 'Z',
                 "attributedTo": self.__user__['id'],
                 "inReplyTo": source['id'],
                 ## FIXME WTF
                 #"context":"tag:mastodon.ml,2022-05-21:objectId=9633346:objectType=Conversation",
                 #"conversation": "tag:mastodon.ml,2022-05-21:objectId=9633346:objectType=Conversation",
+                "context": source.get('context', None),
                 "content": message,
+                "source": message,
                 "senstive": None,
                 "summary": "",
                 "to": [
@@ -188,13 +209,18 @@ class Fediverse:
                     #    "href": "https://mastodon.ml/users/rf",
                     #    "name": "@rf@mastodon.ml",
                     #    "type": "Mention"
-                    #}
+                    #},
+                    {
+                        "href": remote_author.get('url', remote_author.get('id', None)),
+                        "name": f"@{remote_author['name']}@{remote_author_url.hostname}",
+                        "type": "Mention"
+                    }
                 ],
                 "attachment": []
             }
         }
         
-        data['result'] = self.post(remote_author['endpoints']['sharedInbox'], json=data)
+        data['object']['result'] = self.post(remote_author['endpoints']['sharedInbox'], json=data)
         return data
     
     def sign(self, url, headers):

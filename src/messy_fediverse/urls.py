@@ -10,6 +10,7 @@ urlpatterns = [
     path('.json', controller.root_json, name='root-json'),
     path('/outbox/', controller.outbox, name='outbox'),
     path('/inbox/', controller.inbox, name='inbox'),
+    path('/featured/', controller.featured, name='featured'),
     path('/api/auth/', controller.auth, name='auth'),
     path('/api/auth/token/', controller.auth_token, name='auth-token'),
     path('/interact/', controller.Interact.as_view(), name='interact'),

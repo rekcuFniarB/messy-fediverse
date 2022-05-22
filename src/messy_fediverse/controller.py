@@ -63,7 +63,7 @@ def fediverse_factory(request):
             "@context": [
                 "https://www.w3.org/ns/activitystreams",
                 #"https://w3id.org/security/v1",
-                staticurl(request, 'messy/fediverse/usercontext.json'),
+                staticurl(request, 'messy/fediverse/litepub.json'),
                 #f"{proto}://{request.site.domain}/schemas/litepub-0.1.jsonld",
                 {
                     "@language": "und"

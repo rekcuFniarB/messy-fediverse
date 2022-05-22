@@ -152,7 +152,7 @@ class Fediverse:
             #    {"@language": "und"}
             #],
             
-            #"@context": self.user.get('@context'),
+            "@context": self.user.get('@context'),
             
             "@context": [
                 "https://www.w3.org/ns/activitystreams",

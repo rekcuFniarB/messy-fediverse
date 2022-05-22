@@ -7,6 +7,7 @@ from django.core.cache import cache
 from django.core.mail import mail_admins
 from django.views import View
 from django.views.decorators.csrf import csrf_exempt
+from django.templatetags.static import static as _staticurl
 from .forms import InteractForm
 from .fediverse import Fediverse
 import requests
@@ -18,6 +19,12 @@ from urllib.parse import urlparse
 
 sentinel = object()
 __cache__ = {}
+
+def staticurl(request, path):
+    path = _staticurl(path)
+    if not path.startswith('http://') and not path.startswith('https://'):
+        path = f'https://{request.site.domain}/{path.lstrip("/")}'
+    return path
 
 def is_json_request(request):
     '''Check if client wants json'''
@@ -53,6 +60,8 @@ def fediverse_factory(request):
         user = {
             "@context": [
                 "https://www.w3.org/ns/activitystreams",
+                "https://w3id.org/security/v1",
+                staticurl(request, 'messy/fediverse/usercontext.json'),
                 #f"{proto}://{request.site.domain}/schemas/litepub-0.1.jsonld",
                 {
                     "@language": "und"

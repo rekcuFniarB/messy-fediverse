@@ -9,20 +9,24 @@ from OpenSSL import crypto
 from hashlib import sha256
 
 class Fediverse:
-    def __init__(self, user, privkey, pubkey, headers=None, cache=None):
+    def __init__(self, user, privkey, pubkey, headers=None, cache=None, debug=False):
         '''
         :cache object: optional cache object used for ceching requests
         '''
-        self.__cache = cache
-        self.__sentinel = object()
-        self.__headers = headers
-        self.user = user
-        self.__privkey = privkey
-        self.__pubken = pubkey
+        self.__cache__ = cache
+        self.__sentinel__ = object()
+        self.__headers__ = headers
+        self.__user__ = user
+        self.__privkey__ = privkey
+        self.__pubkey__ = pubkey
+        self.__DEBUG__ = debug
     
     def uniqid(self):
         return hex(int(str(datetime.now().timestamp()).replace('.', '')))[2:]
-        
+    
+    @property
+    def user(self):
+        return self.__user__
     
     def get(self, url, *args, **kwargs):
         '''
@@ -31,12 +35,12 @@ class Fediverse:
         '''
         data = None
         
-        if self.__cache is not None:
-            data = self.__cache.get(url, None)
+        if self.__cache__ is not None:
+            data = self.__cache__.get(url, None)
         
         if data is None:
-            if self.__headers is not None:
-                headers = self.__headers.copy()
+            if self.__headers__ is not None:
+                headers = self.__headers__.copy()
                 if 'headers' in kwargs:
                     headers.update(kwargs['headers'])
                 kwargs['headers'] = headers
@@ -62,8 +66,8 @@ class Fediverse:
             else:
                 data = r.text
             
-            if self.__cache is not None and data:
-                self.__cache.set(url, data)
+            if self.__cache__ is not None and data:
+                self.__cache__.set(url, data)
         
         return data
     
@@ -74,8 +78,8 @@ class Fediverse:
         Accepts same args as requests's module "post" method.
         '''
         
-        if self.__headers is not None:
-            headers = self.__headers.copy()
+        if self.__headers__ is not None:
+            headers = self.__headers__.copy()
             if 'headers' in kwargs:
                 headers.update(kwargs['headers'])
             kwargs['headers'] = headers
@@ -134,15 +138,15 @@ class Fediverse:
         
         data = {
             "@context": "https://www.w3.org/ns/activitystreams",
-            "id": path.join(self.user['id'], 'activity', datepath, uniqid, ''),
+            "id": path.join(self.__user__['id'], 'activity', datepath, uniqid, ''),
             "type": "Create",
-            "actor": self.user['id'],
+            "actor": self.__user__['id'],
             
             "object": {
-                "id": path.join(self.user['id'], 'status', datepath, uniqid, ''),
+                "id": path.join(self.__user__['id'], 'status', datepath, uniqid, ''),
                 "type": "Note",
                 "published": now.isoformat(timespec='seconds') + 'Z',
-                "attributedTo": self.user['id'],
+                "attributedTo": self.__user__['id'],
                 "inReplyTo": source['id'],
                 "content": message,
                 "to": "https://www.w3.org/ns/activitystreams#Public"
@@ -165,6 +169,6 @@ class Fediverse:
             f'date: {headers["Date"]}',
             f'digest: {headers["Digest"]}'
         ))
-        pkey = crypto.load_privatekey(crypto.FILETYPE_PEM, self.__privkey)
+        pkey = crypto.load_privatekey(crypto.FILETYPE_PEM, self.__privkey__)
         sign = b64encode(crypto.sign(pkey, str2sign, 'sha256')).decode('utf-8')
-        return f'keyId="{self.user["publicKey"]["id"]}",algorithm="rsa-sha256",headers="(request-target) host date digest", signature="{sign}"'
+        return f'keyId="{self.__user__["publicKey"]["id"]}",algorithm="rsa-sha256",headers="(request-target) host date digest", signature="{sign}"'

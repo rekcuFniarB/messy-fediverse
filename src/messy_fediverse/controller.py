@@ -67,6 +67,7 @@ def fediverse_factory(request):
                     "@language": "und"
                 }
             ],
+            "published": "1970-01-01T00:00:00Z",
             "alsoKnownAs": [],
             "attachment": [],
             "capabilities": {

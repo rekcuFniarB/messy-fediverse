@@ -169,6 +169,8 @@ def status(request, rpath):
         return render(request, 'messy/fediverse/status.html', data)
     elif 'object' in data and 'inReplyTo' in data['object']:
         return redirect(data['object']['inReplyTo'])
+    elif 'inReplyTo' in data['object']:
+        return redirect(data['object']['inReplyTo'])
     else:
         raise Http404(f'Status {path} not found.')
 
@@ -222,7 +224,7 @@ class Interact(View):
             fediverse = fediverse_factory(request)
             result = fediverse.reply(data, form.cleaned_data['content'])
             if 'object' in result and 'id' in result['object']:
-                save(result['object']['id'] + '.json', result)
+                save(result['object']['id'] + '.json', result['object'])
             
             #return redirect('/') ## FIXME
         

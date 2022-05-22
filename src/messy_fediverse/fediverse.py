@@ -144,12 +144,13 @@ class Fediverse:
         datepath = now.date().isoformat().replace('-', '/')
         
         data = {
-            "@context": [
-                "https://www.w3.org/ns/activitystreams",
-                "https://w3id.org/security/v1",
-                staticurl(request, 'messy/fediverse/usercontext.json'),
-                {"@language": "und"}
-            ],
+            #"@context": [
+            #    "https://www.w3.org/ns/activitystreams",
+            #    "https://w3id.org/security/v1",
+            #    staticurl(request, 'messy/fediverse/usercontext.json'),
+            #    {"@language": "und"}
+            #],
+            "@context": self.user.get('@context'),
             "id": path.join(self.__user__['id'], 'activity', datepath, uniqid, ''),
             "type": "Create",
             "actor": self.__user__['id'],

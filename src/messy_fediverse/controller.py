@@ -111,7 +111,8 @@ def fediverse_factory(request):
             headers=headers,
             user=user,
             privkey=settings.MESSY_SOCIAL['PRIVKEY'],
-            pubkey=settings.MESSY_SOCIAL['PUBKEY']
+            pubkey=settings.MESSY_SOCIAL['PUBKEY'],
+            debug=settings.DEBUG
         )
     return __cache__['fediverse']
 

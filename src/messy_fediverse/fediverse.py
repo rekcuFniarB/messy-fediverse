@@ -10,7 +10,7 @@ from hashlib import sha256
 import syslog
 
 class Fediverse:
-    def __init__(self, user, privkey, pubkey, headers=None, cache=None, debug=False):
+    def __init__(self, user, privkey, pubkey, headers=None, datadir='/tmp', cache=None, debug=False):
         '''
         :cache object: optional cache object used for ceching requests
         '''
@@ -20,6 +20,7 @@ class Fediverse:
         self.__user__ = user
         self.__privkey__ = privkey
         self.__pubkey__ = pubkey
+        self.__datadir__ = datadir
         self.__DEBUG__ = debug
     
     def uniqid(self):
@@ -32,6 +33,27 @@ class Fediverse:
     @property
     def user(self):
         return self.__user__
+    
+    def save(self, filename, data):
+        ## Fixing filename
+        if filename.startswith('http://') or filename.startswith('https://'):
+            filename = urlparse(filename).path
+        filename = filename.lstrip('/') ## removing leading slash
+        if filename.endswith('.json.json'):
+            filename = filename[:-len('.json')]
+        if filename.endswith('/.json'):
+            filename = filename[:-len('/.json')] + '.json'
+        filepath = path.join(self.__datadir__, filename)
+        dirpath = path.dirname(filepath)
+        filename = path.basename(filename)
+        path.os.makedirs(dirpath, mode=0o775, exist_ok=True)
+        
+        with open(filepath, 'wt', encoding='utf-8') as f:
+            datatype = type(data)
+            if (datatype is str):
+                f.write(data)
+            else:
+                json.dump(data, f)
     
     def get(self, url, *args, **kwargs):
         '''
@@ -220,7 +242,11 @@ class Fediverse:
             }
         }
         
+        ## Presave, if receiving side wants to check if status exists
+        self.save(data['object']['id'] + '.json', data['object'])
         data['object']['result'] = self.post(remote_author['endpoints']['sharedInbox'], json=data)
+        ## Resave with result
+        self.save(data['object']['id'] + '.json', data['object'])
         return data
     
     def sign(self, url, headers):

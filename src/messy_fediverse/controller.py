@@ -114,6 +114,7 @@ def fediverse_factory(request):
             user=user,
             privkey=settings.MESSY_SOCIAL['PRIVKEY'],
             pubkey=settings.MESSY_SOCIAL['PUBKEY'],
+            datadir=settings.MEDIA_ROOT,
             debug=settings.DEBUG
         )
     return __cache__['fediverse']
@@ -237,8 +238,8 @@ class Interact(View):
             ## do processing
             fediverse = fediverse_factory(request)
             result = fediverse.reply(data, form.cleaned_data['content'])
-            if 'object' in result and 'id' in result['object']:
-                save(result['object']['id'] + '.json', result['object'])
+            #if 'object' in result and 'id' in result['object']:
+            #    save(result['object']['id'] + '.json', result['object'])
             
             #return redirect('/') ## FIXME
         

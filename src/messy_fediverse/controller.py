@@ -169,8 +169,8 @@ def status(request, rpath):
         return render(request, 'messy/fediverse/status.html', data)
     elif 'object' in data and 'inReplyTo' in data['object']:
         return redirect(data['object']['inReplyTo'])
-    elif 'inReplyTo' in data['object']:
-        return redirect(data['object']['inReplyTo'])
+    elif 'inReplyTo' in data:
+        return redirect(data['inReplyTo'])
     else:
         raise Http404(f'Status {path} not found.')
 

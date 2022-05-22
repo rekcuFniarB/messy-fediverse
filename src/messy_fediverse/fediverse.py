@@ -7,6 +7,7 @@ from email import utils as emailutils
 from base64 import b64encode
 from OpenSSL import crypto
 from hashlib import sha256
+import syslog
 
 class Fediverse:
     def __init__(self, user, privkey, pubkey, headers=None, cache=None, debug=False):
@@ -23,6 +24,10 @@ class Fediverse:
     
     def uniqid(self):
         return hex(int(str(datetime.now().timestamp()).replace('.', '')))[2:]
+    
+    def syslog(msg):
+        if self.__DEBUG__:
+            syslog.syslog(syslog.LOG_INFO, f'MESSY SOCIAL: {msg}')
     
     @property
     def user(self):
@@ -52,6 +57,7 @@ class Fediverse:
             
             if not r.ok:
                 try:
+                    self.syslog(f'BAD RESPONSE FOR GET FROM URL "{url}": "{r.text}"')
                     r.raise_for_status()
                 except BaseException as e:
                     if r.text and e.args:
@@ -107,6 +113,7 @@ class Fediverse:
         r = requests.post(url, *args, **kwargs)
         if not r.ok:
             try:
+                self.syslog(f'BAD RESPONSE FOR POST TO URL "{url}": "{r.text}"')
                 r.raise_for_status()
             except BaseException as e:
                 if r.content and e.args:
@@ -141,6 +148,8 @@ class Fediverse:
             "id": path.join(self.__user__['id'], 'activity', datepath, uniqid, ''),
             "type": "Create",
             "actor": self.__user__['id'],
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+            "cc": []
             
             "object": {
                 "id": path.join(self.__user__['id'], 'status', datepath, uniqid, ''),
@@ -149,7 +158,8 @@ class Fediverse:
                 "attributedTo": self.__user__['id'],
                 "inReplyTo": source['id'],
                 "content": message,
-                "to": "https://www.w3.org/ns/activitystreams#Public"
+                "to": ["https://www.w3.org/ns/activitystreams#Public"],
+                "cc": []
             }
         }
         

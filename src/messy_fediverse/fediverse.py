@@ -183,7 +183,7 @@ class Fediverse:
                     #    "name": "@rf@mastodon.ml",
                     #    "type": "Mention"
                     #}
-                ]
+                ],
                 "attachment": []
             }
         }

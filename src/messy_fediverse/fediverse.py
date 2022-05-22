@@ -25,7 +25,7 @@ class Fediverse:
     def uniqid(self):
         return hex(int(str(datetime.now().timestamp()).replace('.', '')))[2:]
     
-    def syslog(msg):
+    def syslog(self, msg):
         if self.__DEBUG__:
             syslog.syslog(syslog.LOG_INFO, f'MESSY SOCIAL: {msg}')
     
@@ -149,7 +149,7 @@ class Fediverse:
             "type": "Create",
             "actor": self.__user__['id'],
             "to": ["https://www.w3.org/ns/activitystreams#Public"],
-            "cc": []
+            "cc": [],
             
             "object": {
                 "id": path.join(self.__user__['id'], 'status', datepath, uniqid, ''),

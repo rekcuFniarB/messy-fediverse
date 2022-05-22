@@ -221,6 +221,8 @@ class Interact(View):
         
         fediverse = fediverse_factory(request)
         data = fediverse.get(url)
+        if type(data) is not dict:
+            raise BadRequest(f'Got unexpected data from {url}')
         
         data['form'] = InteractForm(initial={'link': url})
         

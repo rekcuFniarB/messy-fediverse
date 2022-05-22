@@ -155,13 +155,15 @@ def status(request, rpath):
     if not path.isfile(filepath):
         raise Http404(f'Status {path} not found.')
     
-    if is_json_request(request):
-        return redirect(path.join(settings.MEDIA_URL, request.path.strip('/') + '.json'))
-    
     data = {}
-    
     with open(filepath, 'rt', encoding='utf-8') as f:
         data = json.load(f)
+    
+    if is_json_request(request):
+        response = JsonResponse(data)
+        response.headers['Content-Type'] = 'application/activity+json'
+        return response
+        #return redirect(path.join(settings.MEDIA_URL, request.path.strip('/') + '.json'))
     
     if request.user.is_staff:
         return render(request, 'messy/fediverse/status.html', data)

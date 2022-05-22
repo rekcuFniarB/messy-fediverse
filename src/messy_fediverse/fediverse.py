@@ -62,6 +62,10 @@ class Fediverse:
         '''
         data = None
         
+        ## Plume may return multiple values in "attributedTo"
+        if type(url) is list:
+            url = url[0]
+        
         if self.__cache__ is not None:
             data = self.__cache__.get(url, None)
         

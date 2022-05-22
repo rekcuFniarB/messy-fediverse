@@ -153,20 +153,38 @@ class Fediverse:
                 "https://www.w3.org/ns/activitystreams#Public"
             ],
             "cc": [],
+            "directMessage": False,
+            ## FIXME WTF
+            #"context": "tag:mastodon.ml,2022-05-21:objectId=9633346:objectType=Conversation",
+            #"context_id": 2320494,
             
             "object": {
                 "id": path.join(self.__user__['id'], 'status', datepath, uniqid, ''),
                 "type": "Note",
+                "actor": self.__user__['id'],
                 "url": path.join(self.__user__['id'], 'status', datepath, uniqid, ''),
                 "published": now.isoformat(timespec='seconds') + 'Z',
                 "attributedTo": self.__user__['id'],
                 "inReplyTo": source['id'],
+                ## FIXME WTF
+                #"context":"tag:mastodon.ml,2022-05-21:objectId=9633346:objectType=Conversation",
+                #"conversation": "tag:mastodon.ml,2022-05-21:objectId=9633346:objectType=Conversation",
                 "content": message,
+                "senstive": None,
+                "summary": "",
                 "to": [
                     source.get('attributedTo', None),
                     "https://www.w3.org/ns/activitystreams#Public"
                 ],
-                "cc": []
+                "cc": [],
+                "tag": [
+                    #{
+                    #    "href": "https://mastodon.ml/users/rf",
+                    #    "name": "@rf@mastodon.ml",
+                    #    "type": "Mention"
+                    #}
+                ]
+                "attachment": []
             }
         }
         

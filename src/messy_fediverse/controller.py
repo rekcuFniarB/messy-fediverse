@@ -175,6 +175,15 @@ def status(request, rpath):
         data = json.load(f)
     
     if is_json_request(request):
+        if '@context' not in data:
+            data['@context'] = [
+                "https://www.w3.org/ns/activitystreams",
+                #staticurl(request, 'messy/fediverse/litepub.json'),
+                "https://litepub.social/litepub/litepub-v0.1.jsonld",
+                {
+                    "@language": "und"
+                }
+            ]
         response = JsonResponse(data)
         response.headers['Content-Type'] = 'application/activity+json'
         return response

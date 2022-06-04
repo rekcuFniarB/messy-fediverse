@@ -55,7 +55,7 @@ def fediverse_factory(request):
         headers = {
             'Referer': f'{proto}://{request.site.domain}/',
             'Content-Type': 'application/activity+json',
-            'User-Agent': f'Messy Fediverse Instance +{proto}://{request.site.domain}',
+            'User-Agent': f'Messy Fediverse +{proto}://{request.site.domain}',
             'Accept': 'application/activity+json, application/ld+json, application/json'
         }
         
@@ -77,11 +77,11 @@ def fediverse_factory(request):
             },
             "discoverable": False,
             "endpoints": {
-                "oauthAuthorizationEndpoint": f"{proto}://{request.site.domain}{reverse('messy-fediverse:auth')}",
-                "oauthRegistrationEndpoint": f"{proto}://{request.site.domain}/social/api/apps/",
+                #"oauthAuthorizationEndpoint": f"{proto}://{request.site.domain}{reverse('messy-fediverse:auth')}",
+                #"oauthRegistrationEndpoint": f"{proto}://{request.site.domain}/social/api/apps/",
                 "oauthTokenEndpoint": f"{proto}://{request.site.domain}{reverse('messy-fediverse:auth-token')}",
                 "sharedInbox": f"{proto}://{request.site.domain}{reverse('messy-fediverse:inbox')}",
-                "uploadMedia": f"{proto}://{request.site.domain}/social/upload_media/"
+                #"uploadMedia": f"{proto}://{request.site.domain}/social/upload_media/"
             },
             "featured": f"{proto}://{request.site.domain}{reverse('messy-fediverse:featured')}",
             #"featured": {
@@ -89,8 +89,8 @@ def fediverse_factory(request):
             #    "totalItems":0,
             #    "orderedItems":[]
             #},
-            "followers": f"{proto}://{request.site.domain}/social/followers/",
-            "following": f"{proto}://{request.site.domain}/social/following/",
+            "followers": f"{proto}://{request.site.domain}{reverse('messy-fediverse:followers')}",
+            "following": f"{proto}://{request.site.domain}{reverse('messy-fediverse:following')}",
             "id": f"{proto}://{request.site.domain}{reverse('messy-fediverse:root')}",
             "inbox": f"{proto}://{request.site.domain}{reverse('messy-fediverse:inbox')}",
             "manuallyApprovesFollowers": False,
@@ -235,7 +235,7 @@ class Interact(View):
         
         data['form'] = InteractForm(initial={'link': url})
         
-        return render(request, 'messy_fediverse/interact.html', data)
+        return render(request, 'messy/fediverse/interact.html', data)
     
     def post(self, request):
         form = InteractForm(request.POST)
@@ -255,4 +255,4 @@ class Interact(View):
             #return redirect('/') ## FIXME
         
         data['form'] = form
-        return render(request, 'messy_fediverse/interact.html', data)
+        return render(request, 'messy/fediverse/interact.html', data)

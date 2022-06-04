@@ -94,26 +94,36 @@ def fediverse_factory(request):
             "id": f"{proto}://{request.site.domain}{reverse('messy-fediverse:root')}",
             "inbox": f"{proto}://{request.site.domain}{reverse('messy-fediverse:inbox')}",
             "manuallyApprovesFollowers": False,
-            "name": f"{request.site.domain}",
+            "name": settings.MESSY_FEDIVERSE.get('DISPLAY_NAME', f"{request.site.domain}"),
             "outbox": f"{proto}://{request.site.domain}{reverse('messy-fediverse:outbox')}",
-            "preferredUsername": f"{request.site.domain}",
+            "preferredUsername": settings.MESSY_FEDIVERSE.get('USERNAME', f"{request.site.domain}"),
             "publicKey": {
                 "id": f"{proto}://{request.site.domain}{reverse('messy-fediverse:root')}#main-key",
                 "owner": f"{proto}://{request.site.domain}{reverse('messy-fediverse:root')}",
-                "publicKeyPem": settings.MESSY_SOCIAL['PUBKEY']
+                "publicKeyPem": settings.MESSY_FEDIVERSE['PUBKEY']
             },
             "summary": "",
             "tag": [],
             "type": "Person",
-            "url": f"{proto}://{request.site.domain}{reverse('messy-fediverse:root')}"
+            "url": settings.MESSY_FEDIVERSE.get('HOME', f"{proto}://{request.site.domain}{reverse('messy-fediverse:root')}")
         }
+        
+        ## If url defined without hostname
+        userUrl = urlparse(user['url'])
+        if not userUrl.netloc:
+            user['url'] = userUrl._replace(scheme=proto, netloc=request.site.domain).geturl()
+        
+        
+        for k in settings.MESSY_FEDIVERSE:
+            if k in user:
+                user[k] = settings.MESSY_FEDIVERSE[k]
         
         __cache__['fediverse'] = Fediverse(
             cache=cache,
             headers=headers,
             user=user,
-            privkey=settings.MESSY_SOCIAL['PRIVKEY'],
-            pubkey=settings.MESSY_SOCIAL['PUBKEY'],
+            privkey=settings.MESSY_FEDIVERSE['PRIVKEY'],
+            pubkey=settings.MESSY_FEDIVERSE['PUBKEY'],
             datadir=settings.MEDIA_ROOT,
             debug=settings.DEBUG
         )
@@ -156,7 +166,7 @@ def dumb(request, *args, **kwargs):
 def featured(request, *args, **kwargs):
     response = JsonResponse({
         "@context": "https://www.w3.org/ns/activitystreams",
-        "id": "https://mastodon.social/users/pashaonesided/collections/featured",
+        "id": f"{proto}://{request.site.domain}{reverse('messy-fediverse:featured')}",
         "type": "OrderedCollection",
         "totalItems": 0,
         "orderedItems": []

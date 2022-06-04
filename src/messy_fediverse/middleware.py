@@ -1,12 +1,12 @@
 import syslog
 from django.http import JsonResponse
 from django.core.exceptions import PermissionDenied #, BadRequest
-from .controller import fediverse_factory
+from .controller import fediverse_factory, root_json
 from django.conf import settings
 from django.urls import resolve, reverse
 from OpenSSL import crypto
 from base64 import b64decode
-from . import urls
+from .urls import app_name
 import re
 from datetime import datetime
 
@@ -23,7 +23,7 @@ class SysLog:
         response = self.get_response(request)
         ## After view code
         
-        if request.resolver_match and request.resolver_match.app_name == urls.app_name:
+        if request.resolver_match and request.resolver_match.app_name == app_name:
             syslog.syslog(syslog.LOG_INFO, f'MESSY SOCIAL {request.method}: {request.path}')
             syslog.syslog(syslog.LOG_INFO, 'GET: ' + request.GET.__str__())
             if request.method == 'POST':
@@ -49,60 +49,83 @@ class WrapIntoStatus:
         ## After view
         timestring = '1970-01-01T00:00:00+00:00'
         request_accept = request.headers.get('accept', '')
+        path = request.path
+        lang_code = getattr(request, 'LANGUAGE_CODE', None)
+        ## Getting rid of lang code from path
+        if lang_code:
+            if f'/{lang_code}' in path:
+                path = path.replace(f'/{lang_code}', '', 1)
+            else:
+                
+                ## Get first part (no lang subcode)
+                lang_code = lang_code.split('-')[0]
+                if f'/{lang_code}' in path:
+                    path = path.replace(f'/{lang_code}', '', 1)
         
-        if request.method == 'GET' and response.status_code == 200 and request_accept.startswith('application/activity+json'):
-            timesearch = self.timeregex.search(response.content)
-            if timesearch:
-                timestring = timesearch.group(1).decode('utf-8', errors='replace')
-            timestring = datetime.utcfromtimestamp(datetime.fromisoformat(timestring).timestamp()).isoformat() + 'Z'
+        home = settings.MESSY_FEDIVERSE.get('HOME', None)
+        home = home and (path == home or request.path == home)
+        
+        if (request.method == 'GET' and response.status_code == 200 and
+                request_accept.startswith('application/activity+json') and
+                request.resolver_match and request.resolver_match.app_name != app_name):
             
-            proto = 'http'
-            if request.is_secure():
-                proto = 'https'
-            
-            title = f'{proto}://{request.site.domain}{request.path}'
-            titlesearch = self.titleregex.search(response.content)
-            if titlesearch:
-                title = titlesearch.group(1).decode('utf-8', errors='replace')
-            
-            data = {
-                '@context': [
-                    "https://www.w3.org/ns/activitystreams",
-                    #staticurl(request, 'social/litepub.json'),
-                    "https://litepub.social/litepub/litepub-v0.1.jsonld",
-                    {"@language": "und"}
-                ],
-                'id': f'{proto}://{request.site.domain}{request.path}',
-                'type': 'Note',
-                ## FIXME Actor should be taken from somewhere
-                'actor': f'{proto}://{request.site.domain}{reverse("messy-fedeverse:root")}',
-                'url': f'{proto}://{request.site.domain}{request.path}',
-                "published": timestring,
-                "attributedTo": f'{proto}://{request.site.domain}{reverse("messy-fedeverse:root")}',
-                'inReplyTo': None,
-                'context': None,
-                'content': f'<a href="{proto}://{request.site.domain}{request.path}">{title}</a>',
-                #'source': '\u041a\u043b\u0430\u0441\u0441!',
-                'senstive': None,
-                'summary': None,
-                'to': [
-                    'https://www.w3.org/ns/activitystreams#Public'
-                ],
-                'cc': [],
-                'tag': [],
-                'attachment': [],
-                #'replies': { ## FIXME TODO
-                #    'id': f'{proto}://{request.site.domain}/{request.path}/replies/',
-                #    'type': "Collection",
-                #    'first': {
-                #        'type': 'CollectionPage',
-                #        'next': f'{proto}://{request.site.domain}/{request.path}/replies/?only_other_accounts=true&page=true',
-                #        'partOf': f'{proto}://{request.site.domain}/{request.path}/replies/',
-                #        'items': []
-                #    }
-                #}
-            }
-            response = JsonResponse(data, content_type='application/activity+json')
+            if home:
+                ## Show user info
+                response = root_json(request)
+            else:
+                ## making status
+                timesearch = self.timeregex.search(response.content)
+                if timesearch:
+                    timestring = timesearch.group(1).decode('utf-8', errors='replace')
+                timestring = datetime.utcfromtimestamp(datetime.fromisoformat(timestring).timestamp()).isoformat() + 'Z'
+                
+                proto = 'http'
+                if request.is_secure():
+                    proto = 'https'
+                
+                title = f'{proto}://{request.site.domain}{request.path}'
+                titlesearch = self.titleregex.search(response.content)
+                if titlesearch:
+                    title = titlesearch.group(1).decode('utf-8', errors='replace')
+                
+                data = {
+                    '@context': [
+                        "https://www.w3.org/ns/activitystreams",
+                        #staticurl(request, 'social/litepub.json'),
+                        "https://litepub.social/litepub/litepub-v0.1.jsonld",
+                        {"@language": "und"}
+                    ],
+                    'id': f'{proto}://{request.site.domain}{request.path}',
+                    'type': 'Note',
+                    ## FIXME Actor should be taken from somewhere
+                    'actor': f'{proto}://{request.site.domain}{reverse("messy-fediverse:root")}',
+                    'url': f'{proto}://{request.site.domain}{request.path}',
+                    "published": timestring,
+                    "attributedTo": f'{proto}://{request.site.domain}{reverse("messy-fediverse:root")}',
+                    'inReplyTo': None,
+                    'context': None,
+                    'content': f'<a href="{proto}://{request.site.domain}{request.path}">{title}</a>',
+                    #'source': '\u041a\u043b\u0430\u0441\u0441!',
+                    'senstive': None,
+                    'summary': None,
+                    'to': [
+                        'https://www.w3.org/ns/activitystreams#Public'
+                    ],
+                    'cc': [],
+                    'tag': [],
+                    'attachment': [],
+                    #'replies': { ## FIXME TODO
+                    #    'id': f'{proto}://{request.site.domain}/{request.path}/replies/',
+                    #    'type': "Collection",
+                    #    'first': {
+                    #        'type': 'CollectionPage',
+                    #        'next': f'{proto}://{request.site.domain}/{request.path}/replies/?only_other_accounts=true&page=true',
+                    #        'partOf': f'{proto}://{request.site.domain}/{request.path}/replies/',
+                    #        'items': []
+                    #    }
+                    #}
+                }
+                response = JsonResponse(data, content_type='application/activity+json')
         
         return response
 
@@ -119,7 +142,8 @@ class VerifySignature:
         return self.get_response(request)
     
     def process_view(self, request, view_func, view_args, view_kwargs):
-        if request.method == 'POST' and not request.user.is_staff and request.resolver_match and request.resolver_match.app_name == urls.app_name:
+        if (request.method == 'POST' and not request.user.is_staff and
+                request.resolver_match and request.resolver_match.app_name == app_name):
             signature_string = request.headers.get('signature', None)
             if not signature_string:
                 return self.response_error(request, 'Signature required')
@@ -135,7 +159,7 @@ class VerifySignature:
             if signature.get('algorithm', 'rsa-sha256') not in ('sha256', 'rsa-sha256'):
                 return self.response_error(request, 'Unsupported signature algorithm')
             
-            fediverse = fedeverse_factory(request)
+            fediverse = fediverse_factory(request)
             actor = fediverse.get(signature['keyId'])
             if type(actor) is not dict:
                 return self.response_error(request, f'Actor verify failed: {actor}')

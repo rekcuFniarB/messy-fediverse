@@ -31,6 +31,12 @@ def is_json_request(request):
     accept = request.META.get('HTTP_ACCEPT', '')
     return 'application/json' in accept or 'application/activity+json' in accept
 
+def request_protocol(request):
+    proto = 'http'
+    if request.is_secure():
+        proto = 'https'
+    return proto
+
 def log_request(request):
     return mail_admins(
         subject=f'SOCIAL {request.method} REQUEST: {request.path}',
@@ -48,9 +54,10 @@ def log_request(request):
 
 def fediverse_factory(request):
     if 'fediverse' not in __cache__:
-        proto = 'https' ## FIXME probably they don't accept non https
-        if request.is_secure():
-            proto = 'https'
+        proto = request_protocol(request)
+        #proto = 'https' ## FIXME probably they don't accept non https
+        #if request.is_secure():
+        #    proto = 'https'
         
         headers = {
             'Referer': f'{proto}://{request.site.domain}/',
@@ -164,6 +171,8 @@ def dumb(request, *args, **kwargs):
 
 @csrf_exempt
 def featured(request, *args, **kwargs):
+    proto = request_protocol(request)
+    
     response = JsonResponse({
         "@context": "https://www.w3.org/ns/activitystreams",
         "id": f"{proto}://{request.site.domain}{reverse('messy-fediverse:featured')}",
@@ -181,9 +190,7 @@ def webfinger(request):
     resource = request.GET.get('resource', None)
     result = None
     
-    proto = 'http'
-    if request.is_secure():
-        proto = 'https'
+    proto = request_protocol(request)
     
     if resource and resource.startswith('acct:') and '@' in resource:
         resource = resource.replace('acct:', '',  1)

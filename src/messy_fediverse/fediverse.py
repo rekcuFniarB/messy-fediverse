@@ -268,7 +268,7 @@ class Fediverse:
                     #},
                     {
                         "href": remote_author.get('url', remote_author.get('id', None)),
-                        "name": f"@{remote_author['name']}@{remote_author_url.hostname}",
+                        "name": f"@{remote_author['preferredUsername']}@{remote_author_url.hostname}",
                         "type": "Mention"
                     }
                 ],

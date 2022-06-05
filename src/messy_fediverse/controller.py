@@ -131,7 +131,7 @@ def fediverse_factory(request):
             user=user,
             privkey=settings.MESSY_FEDIVERSE['PRIVKEY'],
             pubkey=settings.MESSY_FEDIVERSE['PUBKEY'],
-            datadir=settings.MEDIA_ROOT,
+            datadir=settings.MESSY_FEDIVERSE.get('DATADIR', settings.MEDIA_ROOT),
             debug=settings.DEBUG
         )
     return __cache__['fediverse']

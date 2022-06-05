@@ -42,11 +42,15 @@ class Fediverse:
         if filename.startswith('http://') or filename.startswith('https://'):
             filename = urlparse(filename).path
         filename = filename.lstrip('/') ## removing leading slash
+        
         if filename.endswith('.json.json'):
             filename = filename[:-len('.json')]
         if filename.endswith('/.json'):
             filename = filename[:-len('/.json')] + '.json'
-        filepath = path.join(self.__datadir__, filename)
+        
+        if not filename.startswith(self.__datadir__):
+            filepath = path.join(self.__datadir__, filename)
+        
         dirpath = path.dirname(filepath)
         filename = path.basename(filename)
         path.os.makedirs(dirpath, mode=0o775, exist_ok=True)

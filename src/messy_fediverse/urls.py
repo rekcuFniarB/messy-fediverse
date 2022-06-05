@@ -8,6 +8,7 @@ app_name = 'messy-fediverse'
 urlpatterns = [
     path('/', controller.main, name='root'),
     path('.json', controller.root_json, name='root-json'),
+    path('/webfinger/', controller.webfinger, name='webfinger'),
     path('/outbox/', controller.outbox, name='outbox'),
     path('/inbox/', controller.inbox, name='inbox'),
     path('/featured/', controller.featured, name='featured'),

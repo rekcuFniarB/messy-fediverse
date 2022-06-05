@@ -23,6 +23,9 @@ class Fediverse:
         self.__datadir__ = datadir
         self.__DEBUG__ = debug
     
+    def __getattr__(self, name):
+        return self.__user__.get(name, None)
+    
     def uniqid(self):
         return hex(int(str(datetime.now().timestamp()).replace('.', '')))[2:]
     

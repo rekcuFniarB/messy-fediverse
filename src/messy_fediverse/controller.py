@@ -174,6 +174,53 @@ def featured(request, *args, **kwargs):
     response.headers['Content-Type'] = 'application/activity+json'
     return response
 
+def webfinger(request):
+    '''
+    Configure your web server so that request to "/.well-known/webfinger" points here.
+    '''
+    resource = request.GET.get('resource', None)
+    result = None
+    
+    proto = 'http'
+    if request.is_secure():
+        proto = 'https'
+    
+    if resource and resource.startswith('acct:') and '@' in resource:
+        resource = resource.replace('acct:', '',  1)
+        username, hostname = resource.split('@')
+        if hostname == request.site.domain:
+            fedUser = fediverse_factory(request)
+            if fedUser.preferredUsername == username:
+                result = {
+                    'subject': f'acct:{username}@{hostname}',
+                    'aliases': [
+                        fedUser.url,
+                        fedUser.id
+                    ],
+                    'links': [
+                        {
+                            'href': fedUser.url,
+                            'rel': 'http://webfinger.net/rel/profile-page',
+                            'type': 'text/html'
+                        },
+                        {
+                            'href': fedUser.id,
+                            'rel': 'self',
+                            'type': 'application/activity+json'
+                        },
+                        {
+                            'rel': 'http://ostatus.org/schema/1.0/subscribe',
+                            'template': f'{proto}://{request.site.domain}{reverse("messy-fediverse:interact")}?acct={{uri}}'
+                        }
+                    ]
+                }
+    
+    if not result:
+        response = JsonResponse({'error': 'Resource not found'})
+    else:
+        response = JsonResponse(result)
+    return response
+
 @csrf_exempt
 def status(request, rpath):
     filepath = path.join(settings.MEDIA_ROOT, request.path.strip('/') + '.json')

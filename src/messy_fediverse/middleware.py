@@ -160,7 +160,15 @@ class VerifySignature:
                 return self.response_error(request, 'Unsupported signature algorithm')
             
             fediverse = fediverse_factory(request)
-            actor = fediverse.get(signature['keyId'])
+            try:
+                actor = fediverse.get(signature['keyId'])
+            except BaseException as e:
+                if settings.DEBUG:
+                    ## Raise original exception (probably HTTPError)
+                    raise e
+                else:
+                    raise PermissionDenied(*e.args)
+            
             if type(actor) is not dict:
                 return self.response_error(request, f'Actor verify failed: {actor}')
             

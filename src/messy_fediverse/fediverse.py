@@ -37,7 +37,12 @@ class Fediverse:
     def user(self):
         return self.__user__
     
-    def save(self, filename, data):
+    def normalize_file_path(self, filename):
+        '''
+        Normalizing file path. Making it absolute and other sanitizings.
+        filename: string, relative file path
+        Returns absolute file path string.
+        '''
         ## Fixing filename
         if filename.startswith('http://') or filename.startswith('https://'):
             filename = urlparse(filename).path
@@ -48,8 +53,26 @@ class Fediverse:
         if filename.endswith('/.json'):
             filename = filename[:-len('/.json')] + '.json'
         
-        if not filename.startswith(self.__datadir__):
-            filepath = path.join(self.__datadir__, filename)
+        ## Removing repeating subdirs if any
+        filenameparts = filename.split('/')
+        if (len(filenameparts) > 1 and
+            (self.__datadir__.endswith(f'/{filenameparts[0]}')
+            or self.__datadir__.endswith(f'/{filenameparts[0]}/') )):
+                filenameparts = filenameparts[1:]
+                filename = '/'.join(filenameparts)
+        
+        filepath = path.join(self.__datadir__, filename)
+        
+        return filepath
+    
+    def save(self, filename, data):
+        '''
+        Store object in storage.
+        filename: string, relative file path
+        data: string or any data serializable to json.
+        '''
+        
+        filepath = self.normalize_file_path(filename)
         
         dirpath = path.dirname(filepath)
         filename = path.basename(filename)
@@ -276,3 +299,24 @@ class Fediverse:
         pkey = crypto.load_privatekey(crypto.FILETYPE_PEM, self.__privkey__)
         sign = b64encode(crypto.sign(pkey, str2sign, 'sha256')).decode('utf-8')
         return f'keyId="{self.__user__["publicKey"]["id"]}",algorithm="rsa-sha256",headers="(request-target) host date digest",signature="{sign}"'
+    
+    def save_reply(self, apobject):
+        inReplyTo = urlparse(apobject['inReplyTo'])
+        savepath = path.join(inReplyTo.path, f'{self.uniqid()}.reply.json')
+        self.save(savepath, apobject)
+        return savepath
+    
+    def process_object(self, apobject):
+        '''
+        Process object.
+        apobject: activity pub object, dict
+        '''
+        
+        result = None
+        
+        if 'type' in apobject:
+            if apobject['type'] == 'Note':
+                if 'inReplyTo' in apobject and apobject['inReplyTo']:
+                    result = self.save_reply(apobject)
+        
+        return result

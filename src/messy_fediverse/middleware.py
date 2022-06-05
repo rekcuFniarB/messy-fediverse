@@ -143,7 +143,8 @@ class VerifySignature:
     
     def process_view(self, request, view_func, view_args, view_kwargs):
         if (request.method == 'POST' and not request.user.is_staff and
-                request.resolver_match and request.resolver_match.app_name == app_name):
+                request.resolver_match and request.resolver_match.app_name == app_name and
+                not settings.MESSY_FEDIVERSE.get('NO_VERIFY_SIGNATURE', False)):
             signature_string = request.headers.get('signature', None)
             if not signature_string:
                 return self.response_error(request, 'Signature required')

@@ -7,6 +7,7 @@ from django.core.cache import cache
 from django.core.mail import mail_admins
 from django.views import View
 from django.views.decorators.csrf import csrf_exempt
+from django.utils.decorators import method_decorator
 from django.templatetags.static import static as _staticurl
 from .forms import InteractForm
 from .fediverse import Fediverse
@@ -15,7 +16,6 @@ import json
 from os import path
 from urllib.parse import urlparse
 #from pprint import pprint
-#import json
 
 sentinel = object()
 __cache__ = {}
@@ -30,6 +30,10 @@ def is_json_request(request):
     '''Check if client wants json'''
     accept = request.META.get('HTTP_ACCEPT', '')
     return 'application/json' in accept or 'application/activity+json' in accept
+
+def is_post_json(request):
+    '''Check if request posts json'''
+    return 'application/' in request.content_type and 'json' in request.content_type
 
 def request_protocol(request):
     proto = 'http'
@@ -150,10 +154,6 @@ def root_json(request):
     return response
 
 @csrf_exempt
-def inbox(request):
-    return JsonResponse({'success': log_request(request)})
-
-@csrf_exempt
 def outbox(request):
     return JsonResponse({'success': log_request(request)})
 
@@ -182,6 +182,24 @@ def featured(request, *args, **kwargs):
     })
     response.headers['Content-Type'] = 'application/activity+json'
     return response
+
+@method_decorator(csrf_exempt, name='dispatch')
+class Inbox(View):
+    def post(self, request):
+        result = None
+        if is_post_json(request):
+            data = json.loads(request.body)
+            if 'object' in data:
+                data['object']['requestMeta'] = {}
+                for k in request.META:
+                    if k.startswith('HTTP_'):
+                        data['object']['requestMeta'][k] = request.META[k]
+                
+                result = fediverse_factory(request).process_object(data['object'])
+        
+        log_request(request)
+        
+        return JsonResponse({'success': bool(result)})
 
 def webfinger(request):
     '''
@@ -230,7 +248,8 @@ def webfinger(request):
 
 @csrf_exempt
 def status(request, rpath):
-    filepath = path.join(settings.MEDIA_ROOT, request.path.strip('/') + '.json')
+    filepath = fediverse_factory(request).normalize_file_path(f'{request.path.strip("/")}.json')
+    
     if not path.isfile(filepath):
         raise Http404(f'Status {path} not found.')
     
@@ -262,27 +281,6 @@ def status(request, rpath):
     else:
         raise Http404(f'Status {path} not found.')
 
-def save(filename, data):
-    ## Fixing filename
-    if filename.startswith('http://') or filename.startswith('https://'):
-        filename = urlparse(filename).path
-    filename = filename.lstrip('/') ## removing leading slash
-    if filename.endswith('.json.json'):
-        filename = filename[:-len('.json')]
-    if filename.endswith('/.json'):
-        filename = filename[:-len('/.json')] + '.json'
-    filepath = path.join(settings.MEDIA_ROOT, filename)
-    dirpath = path.dirname(filepath)
-    filename = path.basename(filename)
-    path.os.makedirs(dirpath, mode=0o775, exist_ok=True)
-    
-    with open(filepath, 'wt', encoding='utf-8') as f:
-        datatype = type(data)
-        if (datatype is str):
-            f.write(data)
-        else:
-            json.dump(data, f)
-
 class Interact(View):
     def get(self, request):
         if not request.user.is_staff:
@@ -313,8 +311,6 @@ class Interact(View):
             ## do processing
             fediverse = fediverse_factory(request)
             result = fediverse.reply(data, form.cleaned_data['content'])
-            #if 'object' in result and 'id' in result['object']:
-            #    save(result['object']['id'] + '.json', result['object'])
             
             #return redirect('/') ## FIXME
         

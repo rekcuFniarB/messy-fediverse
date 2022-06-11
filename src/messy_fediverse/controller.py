@@ -17,6 +17,11 @@ from os import path
 from urllib.parse import urlparse
 #from pprint import pprint
 
+class ActivityResponse(JsonResponse):
+    def __init__(self, data):
+        super().__init__(data, content_type='application/activity+json')
+
+
 sentinel = object()
 __cache__ = {}
 
@@ -182,6 +187,25 @@ def featured(request, *args, **kwargs):
     })
     response.headers['Content-Type'] = 'application/activity+json'
     return response
+
+def replies(request, rpath):
+    if not is_json_request(request):
+        raise PermissionDenied
+    
+    proto = request_protocol(request)
+    request_query_string = request.META.get('QUERY_STRING', '')
+    if request_query_string:
+        request_query_string = f'?{request_query_string}'
+    
+    content = 'content' in request.GET
+    
+    return ActivityResponse({
+        '@context': "https://www.w3.org/ns/activitystreams",
+        'id': f"{proto}://{request.site.domain}{reverse('messy-fediverse:replies', kwargs={'rpath': rpath})}{request_query_string}",
+        'type': 'CollectionPage',
+        'partOf': f"{proto}://{request.site.domain}{reverse('messy-fediverse:replies', kwargs={'rpath': rpath})}",
+        'items': fediverse_factory(request).get_replies(rpath, content=content)
+    })
 
 @method_decorator(csrf_exempt, name='dispatch')
 class Inbox(View):

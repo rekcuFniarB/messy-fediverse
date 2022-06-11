@@ -320,3 +320,26 @@ class Fediverse:
                     result = self.save_reply(apobject)
         
         return result
+    
+    def get_replies(self, id, content=False):
+        '''
+        Get replies for status
+        id: string, status id.
+        content: bool, if should return content too. Rurns list of ids if False.
+        Returns activity dict.
+        '''
+        replies = []
+        
+        replies_dir = path.join(self.__datadir__, id.strip(' /'))
+        if path.isdir(replies_dir):
+            for reply_file in path.os.listdir(replies_dir):
+                if reply_file.endswith('.reply.json'):
+                    reply_file = path.join(replies_dir, reply_file)
+                    with open(reply_file, 'rt') as f:
+                        reply = json.load(f)
+                        if content:
+                            replies.append(reply)
+                        else:
+                            replies.append(reply['id'])
+        
+        return replies

@@ -18,5 +18,6 @@ urlpatterns = [
     path('/following/', controller.dumb, name='following'),
     path('/interact/', controller.Interact.as_view(), name='interact'),
     path('/status/<path:rpath>/', controller.status, name='status'),
+    path('/replies/<path:rpath>/', controller.replies, name='replies'),
     path('/<path:rpath>/', controller.dumb, name='dumb')
 ]

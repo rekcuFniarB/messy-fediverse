@@ -158,19 +158,31 @@ def root_json(request):
 
 @csrf_exempt
 def outbox(request):
-    return JsonResponse({'success': log_request(request)})
+    return dumb(request)
 
 @csrf_exempt
 def auth(request):
-    return JsonResponse({'success': log_request(request)})
+    return dumb(request)
 
 @csrf_exempt
 def auth_token(request):
-    return JsonResponse({'success': log_request(request)})
+    return dumb(request)
 
 @csrf_exempt
 def dumb(request, *args, **kwargs):
-    return JsonResponse({'success': log_request(request)})
+    proto = request_protocol(request)
+    request_query_string = request.META.get('QUERY_STRING', '')
+    if request_query_string:
+        request_query_string = f'?{request_query_string}'
+    
+    return ActivityResponse({
+        '@context': 'https://www.w3.org/ns/activitystreams',
+        'id': f"{proto}://{request.site.domain}{request.path}{request_query_string}",
+        'type': 'OrderedCollection',
+        'totalItems': 0,
+        'orderedItems': [],
+        'success': log_request(request)
+    })
 
 @csrf_exempt
 def featured(request, *args, **kwargs):

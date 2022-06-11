@@ -114,16 +114,16 @@ class WrapIntoStatus:
                     'cc': [],
                     'tag': [],
                     'attachment': [],
-                    #'replies': { ## FIXME TODO
-                    #    'id': f'{proto}://{request.site.domain}/{request.path}/replies/',
-                    #    'type': "Collection",
-                    #    'first': {
-                    #        'type': 'CollectionPage',
-                    #        'next': f'{proto}://{request.site.domain}/{request.path}/replies/?only_other_accounts=true&page=true',
-                    #        'partOf': f'{proto}://{request.site.domain}/{request.path}/replies/',
-                    #        'items': []
-                    #    }
-                    #}
+                    'replies': {
+                       'id': f'{proto}://{request.site.domain}{reverse("messy-fediverse:replies", kwargs={"rpath": request.path.strip("/")})}',
+                       'type': "Collection",
+                       'first': {
+                           'type': 'CollectionPage',
+                           'next': f'{proto}://{request.site.domain}{reverse("messy-fediverse:replies", kwargs={"rpath": request.path.strip("/")})}?next',
+                           'partOf': f'{proto}://{request.site.domain}{reverse("messy-fediverse:replies", kwargs={"rpath": request.path.strip("/")})}',
+                           'items': []
+                       }
+                    }
                 }
                 response = JsonResponse(data, content_type='application/activity+json')
         

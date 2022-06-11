@@ -280,6 +280,7 @@ def webfinger(request):
 
 @csrf_exempt
 def status(request, rpath):
+    proto = request_protocol(request)
     filepath = fediverse_factory(request).normalize_file_path(f'{request.path.strip("/")}.json')
     
     if not path.isfile(filepath):
@@ -299,6 +300,19 @@ def status(request, rpath):
                     "@language": "und"
                 }
             ]
+        
+        if 'replies' not in data:
+            data['replies'] = {
+                'id': f'{proto}://{request.site.domain}{reverse("messy-fediverse:replies", kwargs={"rpath": request.path.strip("/")})}',
+                'type': "Collection",
+                'first': {
+                    'type': 'CollectionPage',
+                    'next': f'{proto}://{request.site.domain}{reverse("messy-fediverse:replies", kwargs={"rpath": request.path.strip("/")})}?next',
+                    'partOf': f'{proto}://{request.site.domain}{reverse("messy-fediverse:replies", kwargs={"rpath": request.path.strip("/")})}',
+                    'items': []
+                }
+            }
+        
         return ActivityResponse(data)
         #return redirect(path.join(settings.MEDIA_URL, request.path.strip('/') + '.json'))
     

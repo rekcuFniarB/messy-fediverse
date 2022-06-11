@@ -154,9 +154,7 @@ def main(request):
 
 def root_json(request):
     log_request(request)
-    response = JsonResponse(fediverse_factory(request).user)
-    response.headers['Content-Type'] = 'application/activity+json'
-    return response
+    return ActivityResponse(fediverse_factory(request).user)
 
 @csrf_exempt
 def outbox(request):
@@ -178,15 +176,13 @@ def dumb(request, *args, **kwargs):
 def featured(request, *args, **kwargs):
     proto = request_protocol(request)
     
-    response = JsonResponse({
+    return ActivityResponse({
         "@context": "https://www.w3.org/ns/activitystreams",
         "id": f"{proto}://{request.site.domain}{reverse('messy-fediverse:featured')}",
         "type": "OrderedCollection",
         "totalItems": 0,
         "orderedItems": []
     })
-    response.headers['Content-Type'] = 'application/activity+json'
-    return response
 
 def replies(request, rpath):
     if not is_json_request(request):
@@ -291,9 +287,7 @@ def status(request, rpath):
                     "@language": "und"
                 }
             ]
-        response = JsonResponse(data)
-        response.headers['Content-Type'] = 'application/activity+json'
-        return response
+        return ActivityResponse(data)
         #return redirect(path.join(settings.MEDIA_URL, request.path.strip('/') + '.json'))
     
     if request.user.is_staff:

@@ -221,14 +221,15 @@ class Inbox(View):
         result = None
         if is_post_json(request):
             data = json.loads(request.body)
-            if 'object' in data:
+            if 'object' in data and type(data['object']) is dict:
                 data['object']['requestMeta'] = {}
                 for k in request.META:
                     if k.startswith('HTTP_'):
                         data['object']['requestMeta'][k] = request.META[k]
                 
                 result = fediverse_factory(request).process_object(data['object'])
-        
+            else:
+                fediverse_factory(request).syslog(f'NOT A DICT: {data["object"]}')
         log_request(request)
         
         return JsonResponse({'success': bool(result)})

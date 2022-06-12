@@ -228,8 +228,7 @@ class Inbox(View):
                         data['object']['requestMeta'][k] = request.META[k]
                 
                 result = fediverse_factory(request).process_object(data['object'])
-            else:
-                fediverse_factory(request).syslog(f'NOT A DICT: {data["object"]}')
+        
         log_request(request)
         
         return JsonResponse({'success': bool(result)})
@@ -313,6 +312,9 @@ def status(request, rpath):
                     'items': []
                 }
             }
+        
+        if 'conversation' not in data and 'context' not in data:
+            data['context'] = data['conversation'] = data['id']
         
         return ActivityResponse(data)
         #return redirect(path.join(settings.MEDIA_URL, request.path.strip('/') + '.json'))

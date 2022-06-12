@@ -88,6 +88,8 @@ class WrapIntoStatus:
                 if titlesearch:
                     title = titlesearch.group(1).decode('utf-8', errors='replace')
                 
+                context_path = reverse('messy-fediverse:dumb', kwargs={'rpath': f'context/{request.path.strip("/")}'})
+                
                 data = {
                     '@context': [
                         "https://www.w3.org/ns/activitystreams",
@@ -103,9 +105,10 @@ class WrapIntoStatus:
                     "published": timestring,
                     "attributedTo": f'{proto}://{request.site.domain}{reverse("messy-fediverse:root")}',
                     'inReplyTo': None,
-                    'context': None,
+                    'context': f'{proto}://{request.site.domain}{context_path}',
+                    'conversation': f'{proto}://{request.site.domain}{context_path}',
                     'content': f'<a href="{proto}://{request.site.domain}{request.path}">{title}</a>',
-                    #'source': '\u041a\u043b\u0430\u0441\u0441!',
+                    #'source': '',
                     'senstive': None,
                     'summary': None,
                     'to': [

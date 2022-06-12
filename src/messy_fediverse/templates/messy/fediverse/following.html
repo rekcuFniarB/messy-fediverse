@@ -1,0 +1,13 @@
+{% extends 'messy/fediverse/base.html' %}
+
+{% block main %}
+<div id="messy-fediverse-following" class="messy-fediverse">
+    <h2>Following</h2>
+
+    <ul>
+    {% for item in following %}
+        <li><a href="{% url 'messy-fediverse:interact' %}?acct={{ item.id }}">{{ item.preferredUsername }}@{{ item.fediverseInstance }}</a>
+    {% endfor %}
+    </ul>
+</div>
+{% endblock %}

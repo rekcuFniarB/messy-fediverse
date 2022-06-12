@@ -1,14 +1,114 @@
+{% extends 'messy/fediverse/base.html' %}
 
-<h1>Interact:</h1>
-
-{% autoescape off %}
-{{ content }}
-{% endautoescape %}
-
-<form method="post" action=".">
-    {% csrf_token %}
-
-    {{ form.as_p }}
+{% block main %}
+<div id="messy-fediverse-interact" class="messy-fediverse">
+    <h2>Interact</h2>
     
-    <p><input type="submit" value="Send"></p>
-</form>
+    <div class="messy-fediverse-content">
+    {% autoescape off %}
+    {{ content }}
+    {% endautoescape %}
+    </div>
+    
+    <br><br>
+
+    <form method="get" action=".">
+        {{ search_form.as_p }}
+
+        <input type="submit" value="Search">
+    </form>
+
+    {% if publicKey %}
+        {# Is an user #}
+        <br><br>
+        <div class="messy-fediverse-interact-user">
+            {% if icon and icon.url %}
+                <a href="{{ url }}" target="_blank" rel="noopener">
+                    <img src="{{ icon.url }}">
+                </a>
+            {% endif %}
+            
+            <a href="{{ url }}" target="_blank" rel="noopener">
+                {{ preferredUsername }}@{{ fediverseInstance }}
+            </a>
+            
+            <form method="post" action="{% url 'messy-fediverse:following' %}">
+                {% csrf_token %}
+                <input type="hidden" name="id" value="{{ id }}">
+                {% if weFollow %}
+                    <input type="submit" name="unfollow" value="Unfollow">
+                {% else %}
+                    <input type="submit" name="follow" value="Follow">
+                {% endif %}
+            </form>
+        </div>
+    {% endif %}
+
+    <br><br>
+
+    <form method="post" action=".">
+        {% csrf_token %}
+
+        {{ form.as_p }}
+        
+        <p><input type="submit" value="Send"></p>
+    </form>
+    
+    
+    <h3>Raw data</h3>
+    <code><pre>{% autoescape off %}{{ rawJson }}{% endautoescape %}</pre></code>
+    
+    <script type="application/json">{% autoescape off %}{{ rawJson }}{% endautoescape %}</script>
+</div>
+
+<script type="text/javascript">
+var messyInteract = document.getElementById('messy-fediverse-interact');
+messyInteract.onFormSubmit = function(event) {
+    event.preventDefault();
+    var requestUrl = new URL(event.target.action);
+    requestParams = {
+        method: event.target.method.toUpperCase()
+    }
+    var formParams;
+    if (requestParams.method == 'GET') {
+        formParams = requestUrl.searchParams;
+    } else {
+        formParams = new URLSearchParams();
+        requestParams.body = formParams;
+    }
+    
+    for (let input of event.target.elements) {
+        if (!!input.name && !!input.value) {
+            formParams.set(input.name, input.value)
+        }
+    }
+    
+    fetch(requestUrl.href, requestParams).then(response => {
+        return response.text();
+    }).then(content => {
+        this.updateContent(content);
+    }).catch(error => {
+        console.error('ERROR:', error);
+    });
+}.bind(messyInteract);
+messyInteract.updateContent = function(content) {
+    if (!!content) {
+        var newContent = document.createElement('div');
+        newContent.innerHTML = content;
+        newContent = newContent.querySelector(`#${this.id}`);
+        if (!!newContent) {
+            this.innerHTML = newContent.innerHTML;
+        }
+    }
+    
+    try {
+        this.activityData = JSON.parse(this.querySelector('script[type="application/json"]').innerHTML);
+    } catch (e) {
+        console.error('JSON PARSE ERROR:', e);
+        this.activityData = {};
+    }
+}.bind(messyInteract);
+messyInteract.addEventListener('submit', messyInteract.onFormSubmit);
+messyInteract.updateContent();
+</script>
+{% endblock %}

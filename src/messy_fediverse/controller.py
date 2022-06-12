@@ -9,12 +9,13 @@ from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from django.templatetags.static import static as _staticurl
-from .forms import InteractForm
+from .forms import InteractForm, InteractSearchForm
 from .fediverse import Fediverse
 import requests
 import json
 from os import path
 from urllib.parse import urlparse
+from django.utils.http import urlencode
 #from pprint import pprint
 
 class ActivityResponse(JsonResponse):
@@ -47,7 +48,7 @@ def request_protocol(request):
     return proto
 
 def log_request(request):
-    if settings.MESSY_FEDIVERSE.get('LOG_REQUESTS_TO_MAIL', False):
+    if settings.MESSY_FEDIVERSE.get('LOG_REQUESTS_TO_MAIL', False) and request.method == 'POST':
         return mail_admins(
             subject=f'SOCIAL {request.method} REQUEST: {request.path}',
             fail_silently=not settings.DEBUG,
@@ -82,7 +83,8 @@ def fediverse_factory(request):
             "@context": [
                 "https://www.w3.org/ns/activitystreams",
                 #"https://w3id.org/security/v1",
-                staticurl(request, 'messy/fediverse/litepub.json'),
+                #staticurl(request, 'messy/fediverse/litepub.json'),
+                'https://litepub.social/litepub/litepub-v0.1.jsonld',
                 #f"{proto}://{request.site.domain}/schemas/litepub-0.1.jsonld",
                 {
                     "@language": "und"
@@ -112,7 +114,7 @@ def fediverse_factory(request):
             "following": f"{proto}://{request.site.domain}{reverse('messy-fediverse:following')}",
             "id": f"{proto}://{request.site.domain}{reverse('messy-fediverse:root')}",
             "inbox": f"{proto}://{request.site.domain}{reverse('messy-fediverse:inbox')}",
-            "manuallyApprovesFollowers": False,
+            "manuallyApprovesFollowers": True,
             "name": settings.MESSY_FEDIVERSE.get('DISPLAY_NAME', f"{request.site.domain}"),
             "outbox": f"{proto}://{request.site.domain}{reverse('messy-fediverse:outbox')}",
             "preferredUsername": settings.MESSY_FEDIVERSE.get('USERNAME', f"{request.site.domain}"),
@@ -236,6 +238,41 @@ class Inbox(View):
         
         return JsonResponse({'success': bool(result)})
 
+class Following(View):
+    
+    def get(self, request):
+        if is_json_request(request):
+            return dumb(request)
+        elif not request.user.is_staff:
+            raise PermissionDenied
+        
+        fediverse = fediverse_factory(request)
+        
+        data = {'following': fediverse.get_following()}
+        for item in data['following']:
+            item['fediverseInstance'] = urlparse(item['id']).hostname
+        
+        return render(request, 'messy/fediverse/following.html', data)
+    
+    def post(self, request):
+        if not request.user.is_staff:
+            raise PermissionDenied
+        
+        user_id = request.POST.get('id', None)
+        if not user_id:
+            raise BadRequest('User ID required')
+        
+        fediverse = fediverse_factory(request)
+        
+        result = None
+        
+        if request.POST.get('follow', None):
+            result = fediverse.follow(user_id)
+        elif request.POST.get('unfollow', None):
+            result = fediverse.unfollow(user_id)
+        
+        return redirect(reverse('messy-fediverse:interact') + '?' + urlencode({'acct': user_id}))
+
 def webfinger(request):
     '''
     Configure your web server so that request to "/.well-known/webfinger" points here.
@@ -284,7 +321,8 @@ def webfinger(request):
 @csrf_exempt
 def status(request, rpath):
     proto = request_protocol(request)
-    filepath = fediverse_factory(request).normalize_file_path(f'{request.path.strip("/")}.json')
+    fediverse = fediverse_factory(request)
+    filepath = fediverse.normalize_file_path(f'{request.path.strip("/")}.json')
     
     if not path.isfile(filepath):
         raise Http404(f'Status {path} not found.')
@@ -295,14 +333,7 @@ def status(request, rpath):
     
     if is_json_request(request):
         if '@context' not in data:
-            data['@context'] = [
-                "https://www.w3.org/ns/activitystreams",
-                #staticurl(request, 'messy/fediverse/litepub.json'),
-                "https://litepub.social/litepub/litepub-v0.1.jsonld",
-                {
-                    "@language": "und"
-                }
-            ]
+            data['@context'] = fediverse.user.get('@context')
         
         if 'replies' not in data:
             data['replies'] = {
@@ -337,15 +368,29 @@ class Interact(View):
             raise PermissionDenied
 
         url = request.GET.get('acct', None)
-        if not url:
-            raise BadRequest('What to interact with?')
+        #if not url:
+        #    raise BadRequest('What to interact with?')
         
         fediverse = fediverse_factory(request)
-        data = fediverse.get(url)
-        if type(data) is not dict:
-            raise BadRequest(f'Got unexpected data from {url}')
+        data = {}
+        if url:
+            data = fediverse.get(url)
+            if type(data) is not dict:
+                raise BadRequest(f'Got unexpected data from {url}')
         
+        if 'url' not in data and 'id' in data:
+            data['url'] = data['id']
+        
+        if 'id' in data:
+            data['fediverseInstance'] = urlparse(data['id']).hostname
+        
+        ## If is an user profile
+        if 'publicKey' in data:
+            data['weFollow'] = fediverse.doWeFollow(data['id'])
+        
+        data['rawJson'] = json.dumps(data, indent=4)
         data['form'] = InteractForm(initial={'link': url})
+        data['search_form'] = InteractSearchForm(initial={'acct': url})
         
         return render(request, 'messy/fediverse/interact.html', data)
     

@@ -23,7 +23,7 @@ class SysLog:
         response = self.get_response(request)
         ## After view code
         
-        if request.resolver_match and request.resolver_match.app_name == app_name:
+        if request.resolver_match and request.resolver_match.app_name == app_name and request.method == 'POST':
             syslog.syslog(syslog.LOG_INFO, f'MESSY SOCIAL {request.method}: {request.path}')
             syslog.syslog(syslog.LOG_INFO, 'GET: ' + request.GET.__str__())
             if request.method == 'POST':

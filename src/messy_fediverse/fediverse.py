@@ -85,6 +85,25 @@ class Fediverse:
             else:
                 json.dump(data, f)
     
+    def read(self, filename):
+        '''
+        Get data from local storage.
+        filename: string file path.
+        '''
+        data = None
+        filepath = self.normalize_file_path(filename)
+        if path.isfile(filepath):
+            with open(filepath, 'rt', encoding='utf-8') as f:
+                data = json.load(f)
+        return data
+    
+    def remove(self, filename):
+        filepath = self.normalize_file_path(filename)
+        result = False
+        if path.isfile(filepath):
+            result = path.os.unlink(filepath)
+        return result
+    
     def get(self, url, *args, **kwargs):
         '''
         Making request to specified URL.
@@ -151,20 +170,23 @@ class Fediverse:
         
         if 'json' in kwargs and type(kwargs['json']) is dict:
             if 'object' in kwargs['json'] and 'published' in kwargs['json']['object']:
-                if 'headers' not in kwargs:
-                    kwargs['headers'] = {}
-                
                 pub_datetime = kwargs['json']['object']['published']
-                ## Removind zulu timezone indicator from the end of string
-                if pub_datetime.endswith('Z'):
-                    pub_datetime = pub_datetime[:-1]
-                
-                request_date = emailutils.format_datetime(datetime.fromisoformat(pub_datetime)).replace(' -0000', ' GMT')
-                kwargs['data'] = json.dumps(kwargs['json'])
-                del(kwargs['json'])
-                kwargs['headers']['Date'] = request_date
-                kwargs['headers']['Digest'] = 'sha-256=' + b64encode(sha256(kwargs['data'].encode('utf-8')).digest()).decode('utf-8')
-                kwargs['headers']['Signature'] = self.sign(url, kwargs['headers'])
+            else:
+                pub_datetime = datetime.now().isoformat()
+            
+            if 'headers' not in kwargs:
+                kwargs['headers'] = {}
+            
+            ## Removind zulu timezone indicator from the end of string
+            if pub_datetime.endswith('Z'):
+                pub_datetime = pub_datetime[:-1]
+            
+            request_date = emailutils.format_datetime(datetime.fromisoformat(pub_datetime)).replace(' -0000', ' GMT')
+            kwargs['data'] = json.dumps(kwargs['json'])
+            del(kwargs['json'])
+            kwargs['headers']['Date'] = request_date
+            kwargs['headers']['Digest'] = 'sha-256=' + b64encode(sha256(kwargs['data'].encode('utf-8')).digest()).decode('utf-8')
+            kwargs['headers']['Signature'] = self.sign(url, kwargs['headers'])
         
         r = requests.post(url, *args, **kwargs)
         if not r.ok:
@@ -172,8 +194,8 @@ class Fediverse:
                 self.syslog(f'BAD RESPONSE FOR POST TO URL "{url}": "{r.text}"')
                 r.raise_for_status()
             except BaseException as e:
-                if r.content and e.args:
-                    e.args = (*e.args, r.content.decode('utf-8'))
+                if r.text and e.args:
+                    e.args = (*e.args, r.text)
                 raise e
         
         if 'application/' in r.headers['content-type'] and 'json' in r.headers['content-type']:
@@ -201,27 +223,7 @@ class Fediverse:
         datepath = now.date().isoformat().replace('-', '/')
         
         data = {
-            #"@context": [
-            #    "https://www.w3.org/ns/activitystreams",
-            #    "https://w3id.org/security/v1",
-            #    staticurl(request, 'messy/fediverse/usercontext.json'),
-            #    {"@language": "und"}
-            #],
-            
             "@context": self.user.get('@context'),
-            
-            #"@context": [
-            #    "https://www.w3.org/ns/activitystreams",
-            #    {
-            #        "ostatus": "http://ostatus.org#",
-            #        "atomUri": "ostatus:atomUri",
-            #        "inReplyToAtomUri": "ostatus:inReplyToAtomUri",
-            #        "conversation": "ostatus:conversation",
-            #        "sensitive": "as:sensitive",
-            #        "toot": "http://joinmastodon.org/ns#",
-            #        "votersCount": "toot:votersCount"
-            #    }
-            #],
             
             "id": path.join(self.__user__['id'], 'activity', datepath, uniqid, ''),
             "type": "Create",
@@ -335,11 +337,90 @@ class Fediverse:
             for reply_file in path.os.listdir(replies_dir):
                 if reply_file.endswith('.reply.json'):
                     reply_file = path.join(replies_dir, reply_file)
-                    with open(reply_file, 'rt') as f:
-                        reply = json.load(f)
-                        if content:
-                            replies.append(reply)
-                        else:
-                            replies.append(reply['id'])
+                    try:
+                        with open(reply_file, 'rt') as f:
+                            reply = json.load(f)
+                            if content:
+                                replies.append(reply)
+                            else:
+                                replies.append(reply['id'])
+                    except:
+                        pass
         
         return replies
+    
+    def get_following(self):
+        '''
+        Returns list of persons who we follow.
+        '''
+        result = []
+        following_dir = path.join(self.__datadir__, 'following')
+        if path.isdir(following_dir):
+            for fileitem in path.os.listdir(following_dir):
+                if fileitem.endswith('.json'):
+                    fileitem = path.join(following_dir, fileitem)
+                    try:
+                        with open(fileitem, 'rt') as f:
+                            result.append(json.load(f))
+                    except:
+                        pass
+        return result
+    
+    def follow(self, user_id):
+        '''
+        Send follow request
+        user_id: fediverse user URI
+        '''
+        remote_author = self.get(user_id)
+        data = {
+            '@context': self.user.get('@context'),
+            'id': path.join(self.id, 'activity', self.uniqid(), ''),
+            'type': 'Follow',
+            'actor': self.id,
+            'object': remote_author['id'],
+            'to': [remote_author['id']],
+            'cc': [],
+            'published': datetime.now().isoformat() + 'Z'
+        }
+        
+        remote_author['followRequest'] = data
+        
+        data['result'] = self.post(remote_author['inbox'], json=data)
+        ## Not checking result, mastodon just replies with empty response
+        filename = path.join('following', sha256(user_id.encode('utf-8')).hexdigest() + '.json')
+        return self.save(filename, remote_author)
+    
+    def unfollow(self, user_id):
+        remote_author = self.get(user_id)
+        data = {
+            '@context': self.user.get('@context'),
+            'id': path.join(self.id, 'activity', self.uniqid(), ''),
+            'type': 'Undo',
+            'published': datetime.now().isoformat() + 'Z',
+            'actor': self.id,
+            'object': {
+                'id': path.join(self.id, 'activity', self.uniqid(), ''),
+                'actor': self.id,
+                'object': remote_author['id'],
+                'published': datetime.now().isoformat() + 'Z',
+                'state': 'cancelled',
+                'to': [remote_author['id']],
+                'type': 'Follow'
+            },
+            'to': [remote_author['id']],
+            'cc': []
+        }
+        
+        result = self.post(remote_author['inbox'], json=data)
+        
+        filename = path.join('following', sha256(user_id.encode('utf-8')).hexdigest() + '.json')
+        return self.remove(filename)
+    
+    def doWeFollow(self, user_id):
+        '''
+        Check if we follow user.
+        user_id: fediverse user URI
+        Returns activity dict or None.
+        '''
+        filename = path.join('following', sha256(user_id.encode('utf-8')).hexdigest() + '.json')
+        return self.read(filename)

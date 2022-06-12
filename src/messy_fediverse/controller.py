@@ -47,19 +47,22 @@ def request_protocol(request):
     return proto
 
 def log_request(request):
-    return mail_admins(
-        subject=f'SOCIAL {request.method} REQUEST: {request.path}',
-        fail_silently=not settings.DEBUG,
-        message=f'''
-        GET: {request.META['QUERY_STRING']}
-        
-        POST: {request.POST.__str__()}
-        
-        META: {request.META.__str__()}
-        
-        BODY: {request.body.decode('utf-8', 'replace')}
-        '''
-    )
+    if settings.MESSY_FEDIVERSE.get('LOG_REQUESTS_TO_MAIL', False):
+        return mail_admins(
+            subject=f'SOCIAL {request.method} REQUEST: {request.path}',
+            fail_silently=not settings.DEBUG,
+            message=f'''
+            GET: {request.META['QUERY_STRING']}
+            
+            POST: {request.POST.__str__()}
+            
+            META: {request.META.__str__()}
+            
+            BODY: {request.body.decode('utf-8', 'replace')}
+            '''
+        )
+    else:
+        return False
 
 def fediverse_factory(request):
     if 'fediverse' not in __cache__:

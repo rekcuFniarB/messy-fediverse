@@ -4,14 +4,6 @@
 <div id="messy-fediverse-interact" class="messy-fediverse">
     <h2>Interact</h2>
     
-    <div class="messy-fediverse-content">
-    {% autoescape off %}
-    {{ content }}
-    {% endautoescape %}
-    </div>
-    
-    <br><br>
-
     <form method="get" action=".">
         {{ search_form.as_p }}
 
@@ -43,8 +35,15 @@
             </form>
         </div>
     {% endif %}
+    
+    <div class="messy-fediverse-content">
+    {% autoescape off %}
+    {{ content }}
+    {% endautoescape %}
+    </div>
 
     <br><br>
+    <h2>Post status</ha>
 
     <form method="post" action=".">
         {% csrf_token %}

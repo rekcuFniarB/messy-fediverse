@@ -1,9 +1,29 @@
 {% extends 'messy/fediverse/base.html' %}
 
 {% block main %}
-<p><a href="{{ object.inReplyTo }}" target="_blank">Parent</a></p>
-
-<p><time>{{ object.published }}</time></p>
-
-<p>{{ object.content }}</p>
+<article class="messy-fediverse messy-fediverse-status">
+    {% if summary %}
+        {% if url %}
+            <a href="{{ url }}" rel="noopener" target="_blank">
+        {% endif %}
+            <h2>{{ summary }}</h2>
+        {% if url %}
+            </a>
+        {% endif %}
+    {% endif %}
+    
+    {% if inReplyTo %}
+        <p><a href="{{ inReplyTo }}" target="_blank">Parent</a></p>
+    {% endif %}
+    
+    <p><time>{{ published }}</time></p>
+    
+    {# FIXME need to sanitize html somehow #}
+    {% autoescape off %}
+    <p>{{ content }}</p>
+    {% endautoescape %}
+    
+    <h3>Raw</h3>
+    <code><pre>{{ raw_json }}</pre></code>
+</article>
 {% endblock %}

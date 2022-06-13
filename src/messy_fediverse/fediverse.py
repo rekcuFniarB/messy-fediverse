@@ -7,6 +7,7 @@ from email import utils as emailutils
 from base64 import b64encode
 from OpenSSL import crypto
 from hashlib import sha256
+import re
 import syslog
 
 class Fediverse:
@@ -22,6 +23,7 @@ class Fediverse:
         self.__pubkey__ = pubkey
         self.__datadir__ = datadir
         self.__DEBUG__ = debug
+        self._rewhitespace = re.compile(r'\s+')
     
     def __getattr__(self, name):
         return self.__user__.get(name, None)
@@ -208,7 +210,152 @@ class Fediverse:
         
         return data
     
-    def reply(self, source, message):
+    def parse_tags(self, content):
+        words = self._rewhitespace.split(content)
+        userids = []
+        links = []
+        result = {
+            'tag': []
+        }
+        for word in words:
+            word = word.strip('@#')
+            if '@' in word:
+                ## Probably user@host
+                if word not in userids:
+                    userids.append(word)
+            elif word.startswith('https://') or word.startswith('http://'):
+                if word not in links:
+                    links.append(word)
+        for link in links:
+            url = urlparse(link)
+            name = path.basename(url.path.strip('/'))
+            if name:
+                result['tag'].append({
+                    'type': 'Hashtag',
+                    'name': f'#{name}',
+                    'href': link
+                })
+                content = content.replace(link, f'<a href="{link}" class="mention hashtag" rel="tag">#<span>{name}</span></a></p>')
+        for userid in userids:
+            username, server = userid.split('@')
+            if username and server:
+                try:
+                    ## FIXME consider using async requests
+                    webfinger = self.get(f'https://{server}/.well-known/webfinger?resource=acct:{userid}')
+                    if type(webfinger) is dict and 'aliases' in webfinger and type(webfinger['aliases']) is list and len(webfinger['aliases']) > 0:
+                        result['tag'].append({
+                            'type': 'Mention',
+                            'name': f'@{userid}',
+                            'href': webfinger['aliases'][0]
+                        })
+                        content = content.replace(userid, f'<span class="h-card"><a class="u-url mention" href="{webfinger["aliases"][0]}" rel="ugc">@<span>{username}</span></a></span>')
+                except:
+                    pass
+        
+        result['content'] = content
+        return result
+    
+    def mention(self, activity):
+        '''
+        Sends copy of status to all mentioned users.
+        activity: dict, activity data.
+        '''
+        endpoints = []
+        for tag in activity['object']['tag']:
+            if tag['type'] == 'Mention':
+                try:
+                    user = self.get(tag['href'])
+                    if user and 'endpoints' in user and 'sharedInbox' in user['endpoints']:
+                        if user['endpoints']['sharedInbox'] not in endpoints:
+                            endpoints.append(user['endpoints']['sharedInbox'])
+                        if user['id'] not in activity['object']['cc'] and user['id'] not in activity['object']['to']:
+                            activity['object']['cc'].append(user['id'])
+                except:
+                    pass
+        
+        activity['cc'] = activity['object']['cc']
+        
+        results = []
+        activity['object']['mentionResults'] = []
+        
+        for endpoint in endpoints:
+            try:
+                result = self.post(endpoint, json=activity)
+                results.append(result)
+                activity['object']['mentionResults'].append((endpoint, result))
+            except BaseException as e:
+                activity['object']['mentionResults'].append((endpoint, e.__str__()))
+                pass
+        
+        return results
+    
+    def new_status(self, message, subject='', url=''):
+        '''
+        Create new status.
+        message: string message text
+        '''
+        uniqid = self.uniqid()
+        now = datetime.now()
+        datepath = now.date().isoformat().replace('-', '/')
+        
+        data = {
+            '@context': self.user.get('@context'),
+            
+            'id': path.join(self.__user__['id'], 'activity', datepath, uniqid, ''),
+            'type': 'Create',
+            "actor": self.__user__['id'],
+            'published': now.isoformat() + 'Z',
+            'to': [
+                'https://www.w3.org/ns/activitystreams#Public',
+                self.followers
+            ],
+            "cc": [],
+            "directMessage": False,
+            ## FIXME WTF
+            ## https://socialhub.activitypub.rocks/t/context-vs-conversation/578/4
+            #"context": "tag:mastodon.ml,2022-05-21:objectId=9633346:objectType=Conversation",
+            #"context_id": 2320494,
+            "context": path.join(self.id, 'status', datepath, uniqid, ''),
+            
+            'object': {
+                'id': path.join(self.id, 'status', datepath, uniqid, ''),
+                'type': "Note",
+                'actor': self.id,
+                'url': url or path.join(self.id, 'status', datepath, uniqid, ''),
+                'published': now.isoformat() + 'Z',
+                'attributedTo': self.id,
+                'inReplyTo': None,
+                ## FIXME WTF
+                #"context":"tag:mastodon.ml,2022-05-21:objectId=9633346:objectType=Conversation",
+                #"conversation": "tag:mastodon.ml,2022-05-21:objectId=9633346:objectType=Conversation",
+                'context': path.join(self.id, 'status', datepath, uniqid, ''),
+                'content': message,
+                'source': message,
+                'senstive': None,
+                'summary': subject,
+                'to': [
+                    'https://www.w3.org/ns/activitystreams#Public',
+                    self.followers
+                ],
+                'cc': [],
+                'tag': [],
+                "attachment": []
+            }
+        }
+        
+        parse_result = self.parse_tags(data['object']['content'])
+        data['object']['content'] = parse_result['content']
+        data['object']['tag'].extend(parse_result['tag'])
+        
+        ## Presave, if receiving side wants to check if status exists
+        self.save(data['object']['id'] + '.json', data['object'])
+        ## Send mentions
+        self.mention(data)
+        ## Resave with result
+        self.save(data['object']['id'] + '.json', data['object'])
+        return data
+    
+    def reply(self, source, message, subject='', url=''):
         '''
         Send "reply" request to remote fediverse server.
         source: dict, sending source information.
@@ -245,18 +392,18 @@ class Fediverse:
                 "id": path.join(self.__user__['id'], 'status', datepath, uniqid, ''),
                 "type": "Note",
                 "actor": self.__user__['id'],
-                "url": path.join(self.__user__['id'], 'status', datepath, uniqid, ''),
+                "url": url or path.join(self.__user__['id'], 'status', datepath, uniqid, ''),
                 "published": now.isoformat() + 'Z',
                 "attributedTo": self.__user__['id'],
                 "inReplyTo": source['id'],
                 ## FIXME WTF
                 #"context":"tag:mastodon.ml,2022-05-21:objectId=9633346:objectType=Conversation",
                 #"conversation": "tag:mastodon.ml,2022-05-21:objectId=9633346:objectType=Conversation",
-                "context": source.get('context', None),
+                "context": source.get('context', path.join(self.__user__['id'], 'status', datepath, uniqid, '')),
                 "content": message,
                 "source": message,
                 "senstive": None,
-                "summary": "",
+                "summary": subject,
                 "to": [
                     source.get('attributedTo', None),
                     "https://www.w3.org/ns/activitystreams#Public"
@@ -278,9 +425,13 @@ class Fediverse:
             }
         }
         
+        parse_result = self.parse_tags(data['object']['content'])
+        data['object']['content'] = parse_result['content']
+        data['object']['tag'].extend(parse_result['tag'])
+        
         ## Presave, if receiving side wants to check if status exists
         self.save(data['object']['id'] + '.json', data['object'])
-        data['object']['result'] = self.post(remote_author['endpoints']['sharedInbox'], json=data)
+        self.mention(data)
         ## Resave with result
         self.save(data['object']['id'] + '.json', data['object'])
         return data

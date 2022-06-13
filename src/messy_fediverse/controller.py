@@ -331,6 +331,9 @@ def status(request, rpath):
     with open(filepath, 'rt', encoding='utf-8') as f:
         data = json.load(f)
     
+    if 'object' in data and type(data['object']) is dict:
+        data = data['object']
+    
     if is_json_request(request):
         if '@context' not in data:
             data['@context'] = fediverse.user.get('@context')
@@ -354,11 +357,12 @@ def status(request, rpath):
         #return redirect(path.join(settings.MEDIA_URL, request.path.strip('/') + '.json'))
     
     if request.user.is_staff:
+        data['raw_json'] = json.dumps(data, indent=4)
         return render(request, 'messy/fediverse/status.html', data)
-    elif 'object' in data and 'inReplyTo' in data['object']:
-        return redirect(data['object']['inReplyTo'])
-    elif 'inReplyTo' in data:
+    elif 'inReplyTo' in data and data['inReplyTo']:
         return redirect(data['inReplyTo'])
+    elif 'url' in data and data['url'] and data['url'] != data['id']:
+        return redirect(data['url'])
     else:
         raise Http404(f'Status {path} not found.')
 
@@ -396,18 +400,34 @@ class Interact(View):
     
     def post(self, request):
         form = InteractForm(request.POST)
-        
+        data = {}
+        result = None
         form_is_valid = form.is_valid()
-        data = cache.get(form.cleaned_data['link'], sentinel)
-        if not form.cleaned_data['link'] or data is sentinel:
-            raise BadRequest(f'Object "{form.cleaned_data["link"]}" has been lost, try again.')
+        
+        if 'link' in form.cleaned_data and form.cleaned_data['link']:
+            data = cache.get(form.cleaned_data['link'], sentinel)
+            if data is sentinel:
+                raise BadRequest(f'Object "{form.cleaned_data["link"]}" has been lost, try again.')
         
         if form_is_valid:
             ## do processing
             fediverse = fediverse_factory(request)
-            result = fediverse.reply(data, form.cleaned_data['content'])
+            if data:
+                result = fediverse.reply(
+                    data,
+                    form.cleaned_data['content'],
+                    form.cleaned_data['subject'],
+                    form.cleaned_data['custom_url']
+                )
+            else:
+                result = fediverse.new_status(
+                    form.cleaned_data['content'],
+                    form.cleaned_data['subject'],
+                    form.cleaned_data['custom_url']
+                )
             
-            #return redirect('/') ## FIXME
+            if result:
+                return redirect(result['object']['id'])
         
         data['form'] = form
         return render(request, 'messy/fediverse/interact.html', data)

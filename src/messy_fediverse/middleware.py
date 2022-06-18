@@ -90,6 +90,8 @@ class WrapIntoStatus:
                 
                 context_path = reverse('messy-fediverse:dumb', kwargs={'rpath': f'context/{request.path.strip("/")}'})
                 
+                fediverse = fediverse_factory(request)
+                
                 data = {
                     '@context': [
                         "https://www.w3.org/ns/activitystreams",
@@ -99,8 +101,7 @@ class WrapIntoStatus:
                     ],
                     'id': f'{proto}://{request.site.domain}{request.path}',
                     'type': 'Note',
-                    ## FIXME Actor should be taken from somewhere
-                    'actor': f'{proto}://{request.site.domain}{reverse("messy-fediverse:root")}',
+                    'actor': fediverse.id,
                     'url': f'{proto}://{request.site.domain}{request.path}',
                     "published": timestring,
                     "attributedTo": f'{proto}://{request.site.domain}{reverse("messy-fediverse:root")}',

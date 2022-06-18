@@ -101,7 +101,7 @@ def fediverse_factory(request):
                 #"oauthAuthorizationEndpoint": f"{proto}://{request.site.domain}{reverse('messy-fediverse:auth')}",
                 #"oauthRegistrationEndpoint": f"{proto}://{request.site.domain}/social/api/apps/",
                 "oauthTokenEndpoint": f"{proto}://{request.site.domain}{reverse('messy-fediverse:auth-token')}",
-                "sharedInbox": f"{proto}://{request.site.domain}{reverse('messy-fediverse:inbox')}",
+                "sharedInbox": f"{proto}://{request.site.domain}{reverse('messy-fediverse:inbox')}?shared=y",
                 #"uploadMedia": f"{proto}://{request.site.domain}/social/upload_media/"
             },
             "featured": f"{proto}://{request.site.domain}{reverse('messy-fediverse:featured')}",
@@ -113,7 +113,7 @@ def fediverse_factory(request):
             "followers": f"{proto}://{request.site.domain}{reverse('messy-fediverse:followers')}",
             "following": f"{proto}://{request.site.domain}{reverse('messy-fediverse:following')}",
             "id": f"{proto}://{request.site.domain}{reverse('messy-fediverse:root')}",
-            "inbox": f"{proto}://{request.site.domain}{reverse('messy-fediverse:inbox')}",
+            "inbox": f"{proto}://{request.site.domain}{reverse('messy-fediverse:inbox')}?direct=y",
             "manuallyApprovesFollowers": True,
             "name": settings.MESSY_FEDIVERSE.get('DISPLAY_NAME', f"{request.site.domain}"),
             "outbox": f"{proto}://{request.site.domain}{reverse('messy-fediverse:outbox')}",

@@ -226,6 +226,7 @@ class Fediverse:
             elif word.startswith('https://') or word.startswith('http://'):
                 if word not in links:
                     links.append(word)
+        
         for link in links:
             url = urlparse(link)
             name = path.basename(url.path.strip('/'))
@@ -236,6 +237,7 @@ class Fediverse:
                     'type': 'Hashtag'
                 })
                 content = content.replace(link, f'<a href="{link}" class="mention hashtag" rel="tag">#<span>{name}</span></a></p>')
+        
         for userid in userids:
             username, server = userid.split('@')
             if username and server:
@@ -276,8 +278,6 @@ class Fediverse:
                 except:
                     pass
         
-        ## FIXME Using "to" because Pleroma doesn't show notifications for "cc"
-        ## Maybe will revert in future. Doesn't work though.
         activity['cc'] = activity['object']['cc']
         
         results = []
@@ -329,7 +329,7 @@ class Fediverse:
         
         return activity
     
-    def new_status(self, message, subject='', url=''):
+    def new_status(self, message, subject='', url=None):
         '''
         Create new status.
         message: string message text
@@ -337,13 +337,14 @@ class Fediverse:
         uniqid = self.uniqid()
         now = datetime.now()
         datepath = now.date().isoformat().replace('-', '/')
-        context = path.join(self.id, 'context', datepath, uniqid, '')
+        status_id = url or path.join(self.id, 'status', datepath, uniqid, '')
+        context = path.join(self.id, 'context', urlparse(status_id).path.strip('/'), '')
         
         data = {
-            'id': path.join(self.id, 'status', datepath, uniqid, ''),
+            'id': status_id,
             'type': "Note",
             'actor': self.id,
-            'url': url or path.join(self.id, 'status', datepath, uniqid, ''),
+            'url': status_id,
             'published': now.isoformat() + 'Z',
             'attributedTo': self.id,
             'inReplyTo': None,
@@ -378,7 +379,7 @@ class Fediverse:
         self.save(data['id'] + '.json', data)
         return activity
     
-    def reply(self, source, message, subject='', url=''):
+    def reply(self, source, message, subject='', url=None):
         '''
         Send "reply" request to remote fediverse server.
         source: dict, sending source information.
@@ -391,14 +392,17 @@ class Fediverse:
         uniqid = self.uniqid()
         now = datetime.now()
         datepath = now.date().isoformat().replace('-', '/')
+        status_id = url or path.join(self.id, 'status', datepath, uniqid, '')
         ## Use context of source if exists
-        context = source.get('context', path.join(self.id, 'context', datepath, uniqid, ''))
+        context = path.join(self.id, 'context', urlparse(status_id).path.strip('/'), '')
+        context = source.get('context', source.get('conversation', context))
+        
         
         data = {
-            "id": path.join(self.id, 'status', datepath, uniqid, ''),
+            "id": status_id,
             "type": "Note",
             "actor": self.id,
-            "url": url or path.join(self.id, 'status', datepath, uniqid, ''),
+            "url": status_id,
             "published": now.isoformat() + 'Z',
             "attributedTo": self.id,
             "inReplyTo": source['id'],
@@ -457,36 +461,47 @@ class Fediverse:
         return f'keyId="{self.__user__["publicKey"]["id"]}",algorithm="rsa-sha256",headers="(request-target) host date digest",signature="{sign}"'
     
     def save_reply(self, apobject):
-        inReplyTo = urlparse(apobject['inReplyTo'])
+        context = apobject.get('context', None)
+        conversation = apobject.get('conversation', None)
+        
+        if context and context.startswith(self.id):
+            inReplyTo = urlparse(context)
+        elif conversation and conversation.startswith(self.id):
+            inReplyTo = urlparse(conversation)
+        else:
+            inReplyTo = urlparse(apobject['inReplyTo'])
+        
         savepath = path.join(inReplyTo.path, f'{self.uniqid()}.reply.json')
         self.save(savepath, apobject)
         return savepath
     
     def process_object(self, apobject):
         '''
-        Process object.
-        apobject: activity pub object, dict
+        Process object (usually activity from federated instances).
+        apobject: activitypub object, dict
         '''
         
         result = None
         
         if 'type' in apobject:
             if apobject['type'] == 'Note':
-                if 'inReplyTo' in apobject and apobject['inReplyTo']:
+                ## If we've received a reply message
+                if apobject.get('inReplyTo', None):
                     result = self.save_reply(apobject)
         
         return result
     
-    def get_replies(self, id, content=False):
+    def get_replies(self, object_id, content=False):
         '''
         Get replies for status
         id: string, status id.
-        content: bool, if should return content too. Rurns list of ids if False.
+        content: bool, if should return content too. Returns list of ids if False.
         Returns activity dict.
         '''
         replies = []
+        object_id = urlparse(object_id).path.strip(' /')
         
-        replies_dir = path.join(self.__datadir__, id.strip(' /'))
+        replies_dir = path.join(self.__datadir__, object_id)
         if path.isdir(replies_dir):
             for reply_file in path.os.listdir(replies_dir):
                 if reply_file.endswith('.reply.json'):
@@ -500,6 +515,9 @@ class Fediverse:
                                 replies.append(reply['id'])
                     except:
                         pass
+        
+        if 'context/' not in object_id:
+            replies.extend(self.get_replies(path.join('context', object_id), content))
         
         return replies
     

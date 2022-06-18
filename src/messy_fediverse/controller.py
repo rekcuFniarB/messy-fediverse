@@ -224,8 +224,10 @@ def replies(request, rpath):
 class Inbox(View):
     def post(self, request):
         result = None
+        ## If we've received a JSON
         if is_post_json(request):
             data = json.loads(request.body)
+            ## If activity with object
             if 'object' in data and type(data['object']) is dict:
                 data['object']['requestMeta'] = {}
                 for k in request.META:

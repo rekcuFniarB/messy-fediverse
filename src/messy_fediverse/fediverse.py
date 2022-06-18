@@ -260,6 +260,9 @@ class Fediverse:
         Sends copy of status to all mentioned users.
         activity: dict, activity data.
         '''
+        if 'object' not in activity or 'tag' not in activity['object']:
+            return False
+        
         endpoints = []
         for tag in activity['object']['tag']:
             if tag['type'] == 'Mention':
@@ -269,13 +272,13 @@ class Fediverse:
                         if user['endpoints']['sharedInbox'] not in endpoints:
                             endpoints.append(user['endpoints']['sharedInbox'])
                         if user['id'] not in activity['object']['cc'] and user['id'] not in activity['object']['to']:
-                            activity['object']['to'].append(user['id'])
+                            activity['object']['cc'].append(user['id'])
                 except:
                     pass
         
         ## FIXME Using "to" because Pleroma doesn't show notifications for "cc"
-        ## maybe will revert in future
-        activity['to'] = activity['object']['to']
+        ## Maybe will revert in future. Doesn't work though.
+        activity['cc'] = activity['object']['cc']
         
         results = []
         activity['object']['mentionResults'] = []
@@ -291,6 +294,41 @@ class Fediverse:
         
         return results
     
+    def activity(self, **activity_upd):
+        '''
+        Creating an activity dict.
+        Example usage: activity(object=object, type='Create', ...)
+        Returns dict.
+        '''
+        uniqid = self.uniqid()
+        now = datetime.now()
+        datepath = now.date().isoformat().replace('-', '/')
+        
+        activity = {
+            '@context': self.user.get('@context'),
+            
+            'id': path.join(self.id, 'activity', datepath, uniqid, ''),
+            'type': 'Create',
+            "actor": self.id,
+            'published': now.isoformat() + 'Z',
+            'to': [
+                'https://www.w3.org/ns/activitystreams#Public',
+                self.followers
+            ],
+            'cc': [],
+            'directMessage': False
+        }
+        
+        activity.update(activity_upd)
+        
+        if 'object' in activity and type(activity['object']) is dict:
+            ## Using some values from object
+            for k in activity['object']:
+                if k in ('actor', 'to', 'cc', 'directMessage', 'context', 'conversation'):
+                    activity[k] = activity['object'][k]
+        
+        return activity
+    
     def new_status(self, message, subject='', url=''):
         '''
         Create new status.
@@ -299,64 +337,46 @@ class Fediverse:
         uniqid = self.uniqid()
         now = datetime.now()
         datepath = now.date().isoformat().replace('-', '/')
+        context = path.join(self.id, 'context', datepath, uniqid, '')
         
         data = {
-            '@context': self.user.get('@context'),
-            
-            'id': path.join(self.__user__['id'], 'activity', datepath, uniqid, ''),
-            'type': 'Create',
-            "actor": self.__user__['id'],
+            'id': path.join(self.id, 'status', datepath, uniqid, ''),
+            'type': "Note",
+            'actor': self.id,
+            'url': url or path.join(self.id, 'status', datepath, uniqid, ''),
             'published': now.isoformat() + 'Z',
+            'attributedTo': self.id,
+            'inReplyTo': None,
+            ## FIXME WTF
+            #"context":"tag:mastodon.ml,2022-05-21:objectId=9633346:objectType=Conversation",
+            #"conversation": "tag:mastodon.ml,2022-05-21:objectId=9633346:objectType=Conversation",
+            'context': context,
+            'conversation': context,
+            'content': message,
+            'source': message,
+            'senstive': None,
+            'summary': subject,
             'to': [
                 'https://www.w3.org/ns/activitystreams#Public',
                 self.followers
             ],
-            "cc": [],
-            "directMessage": False,
-            ## FIXME WTF
-            ## https://socialhub.activitypub.rocks/t/context-vs-conversation/578/4
-            #"context": "tag:mastodon.ml,2022-05-21:objectId=9633346:objectType=Conversation",
-            #"context_id": 2320494,
-            "context": path.join(self.id, 'status', datepath, uniqid, ''),
-            
-            'object': {
-                'id': path.join(self.id, 'status', datepath, uniqid, ''),
-                'type': "Note",
-                'actor': self.id,
-                'url': url or path.join(self.id, 'status', datepath, uniqid, ''),
-                'published': now.isoformat() + 'Z',
-                'attributedTo': self.id,
-                'inReplyTo': None,
-                ## FIXME WTF
-                #"context":"tag:mastodon.ml,2022-05-21:objectId=9633346:objectType=Conversation",
-                #"conversation": "tag:mastodon.ml,2022-05-21:objectId=9633346:objectType=Conversation",
-                'context': path.join(self.id, 'context', datepath, uniqid, ''),
-                'conversation': path.join(self.id, 'context', datepath, uniqid, ''),
-                'content': message,
-                'source': message,
-                'senstive': None,
-                'summary': subject,
-                'to': [
-                    'https://www.w3.org/ns/activitystreams#Public',
-                    self.followers
-                ],
-                'cc': [],
-                'tag': [],
-                "attachment": []
-            }
+            'cc': [],
+            'tag': [],
+            "attachment": []
         }
         
-        parse_result = self.parse_tags(data['object']['content'])
-        data['object']['content'] = parse_result['content']
-        data['object']['tag'].extend(parse_result['tag'])
+        parse_result = self.parse_tags(data['content'])
+        data['content'] = parse_result['content']
+        data['tag'].extend(parse_result['tag'])
         
         ## Presave, if receiving side wants to check if status exists
-        self.save(data['object']['id'] + '.json', data['object'])
+        self.save(data['id'] + '.json', data)
+        activity = self.activity(object=data)
         ## Send mentions
-        self.mention(data)
+        self.mention(activity)
         ## Resave with result
-        self.save(data['object']['id'] + '.json', data['object'])
-        return data
+        self.save(data['id'] + '.json', data)
+        return activity
     
     def reply(self, source, message, subject='', url=''):
         '''
@@ -371,74 +391,53 @@ class Fediverse:
         uniqid = self.uniqid()
         now = datetime.now()
         datepath = now.date().isoformat().replace('-', '/')
+        ## Use context of source if exists
+        context = source.get('context', path.join(self.id, 'context', datepath, uniqid, ''))
         
         data = {
-            "@context": self.user.get('@context'),
-            
-            "id": path.join(self.__user__['id'], 'activity', datepath, uniqid, ''),
-            "type": "Create",
-            "actor": self.__user__['id'],
+            "id": path.join(self.id, 'status', datepath, uniqid, ''),
+            "type": "Note",
+            "actor": self.id,
+            "url": url or path.join(self.id, 'status', datepath, uniqid, ''),
             "published": now.isoformat() + 'Z',
+            "attributedTo": self.id,
+            "inReplyTo": source['id'],
+            ## FIXME WTF
+            #"context":"tag:mastodon.ml,2022-05-21:objectId=9633346:objectType=Conversation",
+            #"conversation": "tag:mastodon.ml,2022-05-21:objectId=9633346:objectType=Conversation",
+            'context': context,
+            'conversation': context,
+            "content": message,
+            "source": message,
+            "senstive": None,
+            "summary": subject,
             "to": [
                 source.get('attributedTo', None),
                 "https://www.w3.org/ns/activitystreams#Public"
             ],
             "cc": [],
-            "directMessage": False,
-            ## FIXME WTF
-            ## https://socialhub.activitypub.rocks/t/context-vs-conversation/578/4
-            #"context": "tag:mastodon.ml,2022-05-21:objectId=9633346:objectType=Conversation",
-            #"context_id": 2320494,
-            "context": source.get('context', None),
-            
-            "object": {
-                "id": path.join(self.__user__['id'], 'status', datepath, uniqid, ''),
-                "type": "Note",
-                "actor": self.__user__['id'],
-                "url": url or path.join(self.__user__['id'], 'status', datepath, uniqid, ''),
-                "published": now.isoformat() + 'Z',
-                "attributedTo": self.__user__['id'],
-                "inReplyTo": source['id'],
-                ## FIXME WTF
-                #"context":"tag:mastodon.ml,2022-05-21:objectId=9633346:objectType=Conversation",
-                #"conversation": "tag:mastodon.ml,2022-05-21:objectId=9633346:objectType=Conversation",
-                'context': source.get('context', path.join(self.__user__['id'], 'context', datepath, uniqid, '')),
-                'conversation': source.get('context', path.join(self.__user__['id'], 'context', datepath, uniqid, '')),
-                "content": message,
-                "source": message,
-                "senstive": None,
-                "summary": subject,
-                "to": [
-                    source.get('attributedTo', None),
-                    "https://www.w3.org/ns/activitystreams#Public"
-                ],
-                "cc": [],
-                "tag": [
-                    #{
-                    #    "href": "https://mastodon.ml/users/rf",
-                    #    "name": "@rf@mastodon.ml",
-                    #    "type": "Mention"
-                    #},
-                    {
-                        "href": remote_author.get('url', remote_author.get('id', None)),
-                        "name": f"@{remote_author['preferredUsername']}@{remote_author_url.hostname}",
-                        "type": "Mention"
-                    }
-                ],
-                "attachment": []
-            }
+            "tag": [
+                {
+                    "href": remote_author.get('url', remote_author.get('id', None)),
+                    "name": f"@{remote_author['preferredUsername']}@{remote_author_url.hostname}",
+                    "type": "Mention"
+                }
+            ],
+            "attachment": []
         }
         
         parse_result = self.parse_tags(data['object']['content'])
-        data['object']['content'] = parse_result['content']
-        data['object']['tag'].extend(parse_result['tag'])
+        data['content'] = parse_result['content']
+        data['tag'].extend(parse_result['tag'])
         
         ## Presave, if receiving side wants to check if status exists
-        self.save(data['object']['id'] + '.json', data['object'])
-        self.mention(data)
+        self.save(data['id'] + '.json', data)
+        activity = self.activity(object=data)
+        ## Send mentions
+        self.mention(activity)
         ## Resave with result
-        self.save(data['object']['id'] + '.json', data['object'])
-        return data
+        self.save(data['id'] + '.json', data)
+        return activity
     
     def sign(self, url, headers):
         '''
@@ -506,7 +505,7 @@ class Fediverse:
     
     def get_following(self):
         '''
-        Returns list of persons who we follow.
+        Returns list of persons whom we follow.
         '''
         result = []
         following_dir = path.join(self.__datadir__, 'following')
@@ -527,20 +526,12 @@ class Fediverse:
         user_id: fediverse user URI
         '''
         remote_author = self.get(user_id)
-        data = {
-            '@context': self.user.get('@context'),
-            'id': path.join(self.id, 'activity', self.uniqid(), ''),
-            'type': 'Follow',
-            'actor': self.id,
-            'object': remote_author['id'],
-            'to': [remote_author['id']],
-            'cc': [],
-            'published': datetime.now().isoformat() + 'Z'
-        }
         
-        remote_author['followRequest'] = data
+        activity = self.activity(type='Follow', object=remote_author['id'], to=[remote_author['id']])
         
-        data['result'] = self.post(remote_author['inbox'], json=data)
+        remote_author['followRequest'] = activity
+        
+        activity['result'] = self.post(remote_author['inbox'], json=activity)
         ## Not checking result, mastodon just replies with empty response
         filename = path.join('following', sha256(user_id.encode('utf-8')).hexdigest() + '.json')
         return self.save(filename, remote_author)
@@ -548,25 +539,18 @@ class Fediverse:
     def unfollow(self, user_id):
         remote_author = self.get(user_id)
         data = {
-            '@context': self.user.get('@context'),
             'id': path.join(self.id, 'activity', self.uniqid(), ''),
-            'type': 'Undo',
-            'published': datetime.now().isoformat() + 'Z',
             'actor': self.id,
-            'object': {
-                'id': path.join(self.id, 'activity', self.uniqid(), ''),
-                'actor': self.id,
-                'object': remote_author['id'],
-                'published': datetime.now().isoformat() + 'Z',
-                'state': 'cancelled',
-                'to': [remote_author['id']],
-                'type': 'Follow'
-            },
+            'object': remote_author['id'],
+            'published': datetime.now().isoformat() + 'Z',
+            'state': 'cancelled',
             'to': [remote_author['id']],
-            'cc': []
+            'type': 'Follow'
         }
         
-        result = self.post(remote_author['inbox'], json=data)
+        activity = self.activity(object=data, type='Undo', to=[remote_author['id']])
+        
+        result = self.post(remote_author['inbox'], json=activity)
         
         filename = path.join('following', sha256(user_id.encode('utf-8')).hexdigest() + '.json')
         return self.remove(filename)

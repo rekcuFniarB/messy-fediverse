@@ -231,9 +231,9 @@ class Fediverse:
             name = path.basename(url.path.strip('/'))
             if name:
                 result['tag'].append({
-                    'type': 'Hashtag',
+                    'href': link,
                     'name': f'#{name}',
-                    'href': link
+                    'type': 'Hashtag'
                 })
                 content = content.replace(link, f'<a href="{link}" class="mention hashtag" rel="tag">#<span>{name}</span></a></p>')
         for userid in userids:
@@ -244,9 +244,9 @@ class Fediverse:
                     webfinger = self.get(f'https://{server}/.well-known/webfinger?resource=acct:{userid}')
                     if type(webfinger) is dict and 'aliases' in webfinger and type(webfinger['aliases']) is list and len(webfinger['aliases']) > 0:
                         result['tag'].append({
-                            'type': 'Mention',
+                            'href': webfinger['aliases'][0],
                             'name': f'@{userid}',
-                            'href': webfinger['aliases'][0]
+                            'type': 'Mention'
                         })
                         content = content.replace(userid, f'<span class="h-card"><a class="u-url mention" href="{webfinger["aliases"][0]}" rel="ugc">@<span>{username}</span></a></span>')
                 except:
@@ -269,11 +269,13 @@ class Fediverse:
                         if user['endpoints']['sharedInbox'] not in endpoints:
                             endpoints.append(user['endpoints']['sharedInbox'])
                         if user['id'] not in activity['object']['cc'] and user['id'] not in activity['object']['to']:
-                            activity['object']['cc'].append(user['id'])
+                            activity['object']['to'].append(user['id'])
                 except:
                     pass
         
-        activity['cc'] = activity['object']['cc']
+        ## FIXME Using "to" because Pleroma doesn't show notifications for "cc"
+        ## maybe will revert in future
+        activity['to'] = activity['object']['to']
         
         results = []
         activity['object']['mentionResults'] = []

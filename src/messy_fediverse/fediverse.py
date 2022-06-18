@@ -330,7 +330,8 @@ class Fediverse:
                 ## FIXME WTF
                 #"context":"tag:mastodon.ml,2022-05-21:objectId=9633346:objectType=Conversation",
                 #"conversation": "tag:mastodon.ml,2022-05-21:objectId=9633346:objectType=Conversation",
-                'context': path.join(self.id, 'status', datepath, uniqid, ''),
+                'context': path.join(self.id, 'context', datepath, uniqid, ''),
+                'conversation': path.join(self.id, 'context', datepath, uniqid, ''),
                 'content': message,
                 'source': message,
                 'senstive': None,
@@ -401,7 +402,8 @@ class Fediverse:
                 ## FIXME WTF
                 #"context":"tag:mastodon.ml,2022-05-21:objectId=9633346:objectType=Conversation",
                 #"conversation": "tag:mastodon.ml,2022-05-21:objectId=9633346:objectType=Conversation",
-                "context": source.get('context', path.join(self.__user__['id'], 'status', datepath, uniqid, '')),
+                'context': source.get('context', path.join(self.__user__['id'], 'context', datepath, uniqid, '')),
+                'conversation': source.get('context', path.join(self.__user__['id'], 'context', datepath, uniqid, '')),
                 "content": message,
                 "source": message,
                 "senstive": None,

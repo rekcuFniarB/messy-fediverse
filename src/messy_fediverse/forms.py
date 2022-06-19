@@ -8,3 +8,15 @@ class InteractForm(forms.Form):
 
 class InteractSearchForm(forms.Form):
     acct = forms.CharField(max_length=255, required=False, label='Search')
+
+class ReplyForm(forms.Form):
+    account = forms.EmailField(
+        max_length=255,
+        required=True
+    )
+    uri = forms.URLField(
+        widget=forms.HiddenInput,
+        required=False
+    )
+    
+    account.widget.attrs.update({'placeholder': 'Example: username@example.com'})

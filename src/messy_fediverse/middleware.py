@@ -146,8 +146,10 @@ class VerifySignature:
         return self.get_response(request)
     
     def process_view(self, request, view_func, view_args, view_kwargs):
+        ## Whe check only views which have csrf_exempt because only those views
+        ## are for requests from federated instances.
         if (request.method == 'POST' and not request.user.is_staff and
-                request.resolver_match and request.resolver_match.app_name == app_name and
+                getattr(view_func, 'csrf_exempt', False) and request.resolver_match and request.resolver_match.app_name == app_name and
                 not settings.MESSY_FEDIVERSE.get('NO_VERIFY_SIGNATURE', False)):
             signature_string = request.headers.get('signature', None)
             if not signature_string:

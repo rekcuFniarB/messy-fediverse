@@ -31,8 +31,9 @@ class Fediverse:
     def uniqid(self):
         return hex(int(str(datetime.now().timestamp()).replace('.', '')))[2:]
     
-    def syslog(self, msg):
+    def syslog(self, *msg):
         if self.__DEBUG__:
+            msg = '\n'.join(msg)
             syslog.syslog(syslog.LOG_INFO, f'MESSY SOCIAL: {msg}')
     
     @property
@@ -66,6 +67,15 @@ class Fediverse:
         filepath = path.join(self.__datadir__, filename)
         
         return filepath
+    
+    def symlink(self, source, destination):
+        source = self.normalize_file_path(source)
+        destination = self.normalize_file_path(destination)
+        dirpath = path.dirname(destination)
+        path.os.makedirs(dirpath, mode=0o775, exist_ok=True)
+        ## Relative path
+        source = path.relpath(source, path.dirname(destination))
+        return path.os.symlink(src=source, dst=destination)
     
     def save(self, filename, data):
         '''
@@ -430,17 +440,30 @@ class Fediverse:
             "attachment": []
         }
         
-        parse_result = self.parse_tags(data['object']['content'])
+        parse_result = self.parse_tags(data['content'])
         data['content'] = parse_result['content']
         data['tag'].extend(parse_result['tag'])
         
+        save_path = f'{data["id"]}.json'
+        
+        reply_save_path = None
+        if 'context' in data and data['context'].startswith(self.id):
+            reply_save_path = data['context']
+        elif 'conversation' in data and data['conversation'].startswith(self.id):
+            reply_save_path = data['conversation']
+        
         ## Presave, if receiving side wants to check if status exists
-        self.save(data['id'] + '.json', data)
+        self.save(save_path, data)
+        
+        if reply_save_path:
+            reply_save_path = path.join(reply_save_path, path.basename(data['id'].strip('/')) + '.reply.json')
+            self.symlink(save_path, reply_save_path)
+        
         activity = self.activity(object=data)
         ## Send mentions
         self.mention(activity)
         ## Resave with result
-        self.save(data['id'] + '.json', data)
+        self.save(save_path, data)
         return activity
     
     def sign(self, url, headers):
@@ -470,6 +493,16 @@ class Fediverse:
             inReplyTo = urlparse(conversation)
         else:
             inReplyTo = urlparse(apobject['inReplyTo'])
+        
+        autor_info = None
+        if 'attributedTo' in apobject:
+            try:
+                author_info = self.get(apobject['attributedTo'])
+            except:
+                pass
+            
+            if author_info:
+                apobject['authorInfo'] = author_info
         
         savepath = path.join(inReplyTo.path, f'{self.uniqid()}.reply.json')
         self.save(savepath, apobject)
@@ -510,6 +543,11 @@ class Fediverse:
                         with open(reply_file, 'rt') as f:
                             reply = json.load(f)
                             if content:
+                                if 'authorInfo' not in reply:
+                                    if 'attributedTo' in reply:
+                                        reply['authorInfo'] = {'preferredUsername': path.basename(reply['attributedTo'].strip('/'))}
+                                if 'hash' not in reply:
+                                    reply['hash'] = hex(abs(hash(reply['id'])))[2:]
                                 replies.append(reply)
                             else:
                                 replies.append(reply['id'])
@@ -518,6 +556,9 @@ class Fediverse:
         
         if 'context/' not in object_id:
             replies.extend(self.get_replies(path.join('context', object_id), content))
+        
+        ## Sorting by published time
+        replies.sort(key=lambda x: x['published'])
         
         return replies
     

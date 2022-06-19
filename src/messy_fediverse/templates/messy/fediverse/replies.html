@@ -1,0 +1,51 @@
+{% extends 'messy/fediverse/base.html' %}
+
+{% block main %}
+<section class="messy-fediverse-comments" data-parent-uri="{{ parent_uri }}">
+    <form method="post" action="{% url 'messy-fediverse:replies' rpath %}">
+        <p>You can leave comment using your <a href="https://en.wikipedia.org/wiki/Fediverse" target="_blank" rel="noopener">fediverse</a> account.</p>
+        {% csrf_token %}
+
+        {{ form.as_p }}
+        <input type="submit" value="New comment">
+    </form>
+    
+{% for item in items %}
+    <article id="item-{{ item.hash }}" data-uri="{{ item.id }}">
+        <header>
+            <a href="{{ item.attributedTo }}" rel="author noopener" target="_blank">@{{ item.authorInfo.preferredUsername }}</a>
+            
+            {% spaceless %}
+            <a href="{{ item.id }}" target="_blank" rel="noopener">
+            {% if item.summary %}
+                <h4>{{ item.summary }}</h4>
+            {% else %}
+                #
+            {% endif %}
+            </a>
+            {% endspaceless %}
+            
+            {% spaceless %}
+            <a href="{{ item.id }}" target="_blank" rel="noopener">
+                <time>{{ item.published }}</time>{# FIXME need pretty formatted #}
+            </a>
+            {% endspaceless %}
+        </header>
+        
+        <div class="messy-fediverse-comment-body">
+            {% autoescape off %}
+            {{ item.content }}
+            {% endautoescape %}
+        </div>
+        
+        <footer>
+            {% if request.user.is_staff %}
+                <a href="{% url 'messy-fediverse:interact' %}?acct={{ item.id }}"><button class="reply">Reply</button></a>
+            {% else %}
+                <button class="reply reply-js">Reply</button>
+            {% endif %}
+        </footer>
+    </article>
+{% endfor %}
+</section>
+{% endblock %}

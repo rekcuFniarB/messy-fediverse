@@ -1,7 +1,6 @@
 from django.conf import settings
 from django.shortcuts import render, redirect
 from django.http import JsonResponse, Http404
-from django.urls import reverse
 from django.core.exceptions import PermissionDenied, BadRequest
 from django.core.cache import cache
 from django.core.mail import mail_admins
@@ -9,7 +8,7 @@ from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from django.templatetags.static import static as _staticurl
-from .forms import InteractForm, InteractSearchForm
+from .forms import InteractForm, InteractSearchForm, ReplyForm
 from .fediverse import Fediverse
 import requests
 import json
@@ -26,6 +25,20 @@ class ActivityResponse(JsonResponse):
 sentinel = object()
 __cache__ = {}
 
+def reverse(name, args=None, kwargs=None):
+    '''
+    Django's url reverse wrapper
+    '''
+    ## Lazy imports to avoid circular import issues
+    if 'app_name' not in __cache__:
+        from .urls import app_name
+        __cache__['app_name'] = app_name
+    if 'reverse' not in __cache__:
+        from django.urls import reverse
+        __cache__['reverse'] = reverse
+    
+    return __cache__['reverse'](f"{__cache__['app_name']}:{name}", args=args, kwargs=kwargs)
+
 def staticurl(request, path):
     path = _staticurl(path)
     if not path.startswith('http://') and not path.startswith('https://'):
@@ -40,6 +53,12 @@ def is_json_request(request):
 def is_post_json(request):
     '''Check if request posts json'''
     return 'application/' in request.content_type and 'json' in request.content_type
+
+def is_ajax(request):
+    '''
+    Check if request is AJAX (if header X-Requested-With is XMLHttpRequest).
+    '''
+    return request.META.get('HTTP_X_REQUESTED_WITH', '').upper() == 'XMLHTTPREQUEST'
 
 def request_protocol(request):
     proto = 'http'
@@ -98,35 +117,35 @@ def fediverse_factory(request):
             },
             "discoverable": False,
             "endpoints": {
-                #"oauthAuthorizationEndpoint": f"{proto}://{request.site.domain}{reverse('messy-fediverse:auth')}",
+                #"oauthAuthorizationEndpoint": f"{proto}://{request.site.domain}{reverse('auth')}",
                 #"oauthRegistrationEndpoint": f"{proto}://{request.site.domain}/social/api/apps/",
-                "oauthTokenEndpoint": f"{proto}://{request.site.domain}{reverse('messy-fediverse:auth-token')}",
-                "sharedInbox": f"{proto}://{request.site.domain}{reverse('messy-fediverse:inbox')}?shared=y",
+                "oauthTokenEndpoint": f"{proto}://{request.site.domain}{reverse('auth-token')}",
+                "sharedInbox": f"{proto}://{request.site.domain}{reverse('inbox')}?shared=y",
                 #"uploadMedia": f"{proto}://{request.site.domain}/social/upload_media/"
             },
-            "featured": f"{proto}://{request.site.domain}{reverse('messy-fediverse:featured')}",
+            "featured": f"{proto}://{request.site.domain}{reverse('featured')}",
             #"featured": {
             #    "type":"OrderedCollection",
             #    "totalItems":0,
             #    "orderedItems":[]
             #},
-            "followers": f"{proto}://{request.site.domain}{reverse('messy-fediverse:followers')}",
-            "following": f"{proto}://{request.site.domain}{reverse('messy-fediverse:following')}",
-            "id": f"{proto}://{request.site.domain}{reverse('messy-fediverse:root')}",
-            "inbox": f"{proto}://{request.site.domain}{reverse('messy-fediverse:inbox')}?direct=y",
+            "followers": f"{proto}://{request.site.domain}{reverse('followers')}",
+            "following": f"{proto}://{request.site.domain}{reverse('following')}",
+            "id": f"{proto}://{request.site.domain}{reverse('root')}",
+            "inbox": f"{proto}://{request.site.domain}{reverse('inbox')}?direct=y",
             "manuallyApprovesFollowers": True,
             "name": settings.MESSY_FEDIVERSE.get('DISPLAY_NAME', f"{request.site.domain}"),
-            "outbox": f"{proto}://{request.site.domain}{reverse('messy-fediverse:outbox')}",
+            "outbox": f"{proto}://{request.site.domain}{reverse('outbox')}",
             "preferredUsername": settings.MESSY_FEDIVERSE.get('USERNAME', f"{request.site.domain}"),
             "publicKey": {
-                "id": f"{proto}://{request.site.domain}{reverse('messy-fediverse:root')}#main-key",
-                "owner": f"{proto}://{request.site.domain}{reverse('messy-fediverse:root')}",
+                "id": f"{proto}://{request.site.domain}{reverse('root')}#main-key",
+                "owner": f"{proto}://{request.site.domain}{reverse('root')}",
                 "publicKeyPem": settings.MESSY_FEDIVERSE['PUBKEY']
             },
             "summary": "",
             "tag": [],
             "type": "Person",
-            "url": settings.MESSY_FEDIVERSE.get('HOME', f"{proto}://{request.site.domain}{reverse('messy-fediverse:root')}")
+            "url": settings.MESSY_FEDIVERSE.get('HOME', f"{proto}://{request.site.domain}{reverse('root')}")
         }
         
         ## If url defined without hostname
@@ -195,30 +214,96 @@ def featured(request, *args, **kwargs):
     
     return ActivityResponse({
         "@context": "https://www.w3.org/ns/activitystreams",
-        "id": f"{proto}://{request.site.domain}{reverse('messy-fediverse:featured')}",
+        "id": f"{proto}://{request.site.domain}{reverse('featured')}",
         "type": "OrderedCollection",
         "totalItems": 0,
         "orderedItems": []
     })
 
-def replies(request, rpath):
-    if not is_json_request(request):
-        raise PermissionDenied
+class Replies(View):
+    def parent_uri(self, request, rpath):
+        proto = request_protocol(request)
+        request_query_string = request.META.get('QUERY_STRING', '')
+        if request_query_string:
+            request_query_string = f'?{request_query_string}'
+        return f"{proto}://{request.site.domain}{reverse('replies', kwargs={'rpath': rpath})}{request_query_string}"
     
-    proto = request_protocol(request)
-    request_query_string = request.META.get('QUERY_STRING', '')
-    if request_query_string:
-        request_query_string = f'?{request_query_string}'
+    def render_page(self, request, rpath, data_update={}):
+        data = {
+            'parent_uri': self.parent_uri(request, rpath),
+            'rpath': rpath
+        }
+        data.update(data_update)
+        
+        return render(
+            request,
+            'messy/fediverse/replies.html',
+            data
+        )
     
-    content = 'content' in request.GET
+    def get(self, request, rpath):
+        proto = request_protocol(request)
+        request_query_string = request.META.get('QUERY_STRING', '')
+        if request_query_string:
+            request_query_string = f'?{request_query_string}'
+        
+        content = 'content' in request.GET
+        
+        if is_json_request(request):
+            items = fediverse_factory(request).get_replies(rpath, content=content)
+            return ActivityResponse({
+                '@context': "https://www.w3.org/ns/activitystreams",
+                'id': self.parent_uri(request, rpath),
+                'type': 'CollectionPage',
+                'partOf': f"{proto}://{request.site.domain}{reverse('replies', kwargs={'rpath': rpath})}",
+                'items': items
+            })
+        else:
+            items = fediverse_factory(request).get_replies(rpath, content=True)
+            form = ReplyForm()
+            return self.render_page(request, rpath, {'items': items, 'form': form})
     
-    return ActivityResponse({
-        '@context': "https://www.w3.org/ns/activitystreams",
-        'id': f"{proto}://{request.site.domain}{reverse('messy-fediverse:replies', kwargs={'rpath': rpath})}{request_query_string}",
-        'type': 'CollectionPage',
-        'partOf': f"{proto}://{request.site.domain}{reverse('messy-fediverse:replies', kwargs={'rpath': rpath})}",
-        'items': fediverse_factory(request).get_replies(rpath, content=content)
-    })
+    def post(self, request, rpath):
+        ## If federated reply
+        if 'account' in request.POST:
+            request_post = request.POST.copy()
+            uri = request_post.get('uri', None)
+            if not uri:
+                request_post['uri'] = self.parent_uri(request, rpath)
+            
+            form = ReplyForm(request_post)
+            if form.is_valid():
+                fediverse = fediverse_factory(request)
+                link_template = None
+                
+                username, host = form.cleaned_data['account'].split('@')
+                webfinger = fediverse.get(f'https://{host}/.well-known/webfinger?resource=acct:{form.cleaned_data["account"]}')
+                if type(webfinger) is dict and 'links' in webfinger and type(webfinger['links']) is list:
+                    for link in webfinger['links']:
+                        if type(link) is dict and 'template' in link and link['template']:
+                            link_template = link['template']
+                            break
+                
+                ## Validating webfinger response
+                if not link_template or '{uri}' not in link_template or not (link_template.startswith('https://') or link_template.startswith('http://')):
+                    raise BadRequest(f'Webfinger for {host} failed.\n{link_template}')
+                
+                uri = form.cleaned_data.get('uri', None)
+                if not uri:
+                    ## Reply to thread root.
+                    uri = self.parent_uri(request, rpath)
+                
+                ## Redirecting to federated instance's form
+                if is_ajax(request):
+                    return JsonResponse({'popup': link_template.format(uri=form.cleaned_data['uri'])})
+                else:
+                    return redirect(link_template.format(uri=form.cleaned_data['uri']))
+            else:
+                items = fediverse_factory(request).get_replies(rpath, content=True)
+                return self.render_page(request, rpath, {'items': items, 'form': form})
+    
+        else:
+            raise BadRequest('Unknown form was submitted.')
 
 @method_decorator(csrf_exempt, name='dispatch')
 class Inbox(View):
@@ -273,7 +358,7 @@ class Following(View):
         elif request.POST.get('unfollow', None):
             result = fediverse.unfollow(user_id)
         
-        return redirect(reverse('messy-fediverse:interact') + '?' + urlencode({'acct': user_id}))
+        return redirect(reverse('interact') + '?' + urlencode({'acct': user_id}))
 
 def webfinger(request):
     '''
@@ -309,7 +394,7 @@ def webfinger(request):
                         },
                         {
                             'rel': 'http://ostatus.org/schema/1.0/subscribe',
-                            'template': f'{proto}://{request.site.domain}{reverse("messy-fediverse:interact")}?acct={{uri}}'
+                            'template': f'{proto}://{request.site.domain}{reverse("interact")}?acct={{uri}}'
                         }
                     ]
                 }
@@ -342,12 +427,12 @@ def status(request, rpath):
         
         if 'replies' not in data:
             data['replies'] = {
-                'id': f'{proto}://{request.site.domain}{reverse("messy-fediverse:replies", kwargs={"rpath": request.path.strip("/")})}',
+                'id': f'{proto}://{request.site.domain}{reverse("replies", kwargs={"rpath": request.path.strip("/")})}',
                 'type': "Collection",
                 'first': {
                     'type': 'CollectionPage',
-                    'next': f'{proto}://{request.site.domain}{reverse("messy-fediverse:replies", kwargs={"rpath": request.path.strip("/")})}?next',
-                    'partOf': f'{proto}://{request.site.domain}{reverse("messy-fediverse:replies", kwargs={"rpath": request.path.strip("/")})}',
+                    'next': f'{proto}://{request.site.domain}{reverse("replies", kwargs={"rpath": request.path.strip("/")})}?next',
+                    'partOf': f'{proto}://{request.site.domain}{reverse("replies", kwargs={"rpath": request.path.strip("/")})}',
                     'items': []
                 }
             }
@@ -429,7 +514,14 @@ class Interact(View):
                 )
             
             if result:
-                return redirect(result['object']['id'])
+                ## FIXME This became a little bit messy
+                redirect_path = result['object']['id']
+                context = result['object'].get('context', result['object'].get('conversation', None))
+                if context and context.startswith(fediverse.id):
+                    context = urlparse(context).path
+                    redirect_path = context.replace(reverse('dumb', kwargs={'rpath': 'context'}), '').strip('/')
+                    redirect_path = reverse('replies', kwargs={'rpath': redirect_path})
+                return redirect(redirect_path)
         
         data['form'] = form
         return render(request, 'messy/fediverse/interact.html', data)

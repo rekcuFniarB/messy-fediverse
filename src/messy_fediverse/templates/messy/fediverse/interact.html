@@ -1,7 +1,7 @@
 {% extends 'messy/fediverse/base.html' %}
 
 {% block main %}
-<div id="messy-fediverse-interact" class="messy-fediverse">
+<div id="messy-fediverse-interact">
     <h2>Interact</h2>
     
     <form method="get" action=".">
@@ -59,55 +59,4 @@
     
     <script type="application/json">{% autoescape off %}{{ rawJson }}{% endautoescape %}</script>
 </div>
-
-<script type="text/javascript">
-var messyInteract = document.getElementById('messy-fediverse-interact');
-messyInteract.onFormSubmit = function(event) {
-    event.preventDefault();
-    var requestUrl = new URL(event.target.action);
-    requestParams = {
-        method: event.target.method.toUpperCase()
-    }
-    var formParams;
-    if (requestParams.method == 'GET') {
-        formParams = requestUrl.searchParams;
-    } else {
-        formParams = new URLSearchParams();
-        requestParams.body = formParams;
-    }
-    
-    for (let input of event.target.elements) {
-        if (!!input.name && !!input.value) {
-            formParams.set(input.name, input.value)
-        }
-    }
-    
-    fetch(requestUrl.href, requestParams).then(response => {
-        return response.text();
-    }).then(content => {
-        this.updateContent(content);
-    }).catch(error => {
-        console.error('ERROR:', error);
-    });
-}.bind(messyInteract);
-messyInteract.updateContent = function(content) {
-    if (!!content) {
-        var newContent = document.createElement('div');
-        newContent.innerHTML = content;
-        newContent = newContent.querySelector(`#${this.id}`);
-        if (!!newContent) {
-            this.innerHTML = newContent.innerHTML;
-        }
-    }
-    
-    try {
-        this.activityData = JSON.parse(this.querySelector('script[type="application/json"]').innerHTML);
-    } catch (e) {
-        console.error('JSON PARSE ERROR:', e);
-        this.activityData = {};
-    }
-}.bind(messyInteract);
-messyInteract.addEventListener('submit', messyInteract.onFormSubmit);
-messyInteract.updateContent();
-</script>
 {% endblock %}

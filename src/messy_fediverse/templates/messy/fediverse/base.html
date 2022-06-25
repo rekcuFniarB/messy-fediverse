@@ -1,5 +1,9 @@
 {% load static %}
 
+<template data-move-to-head>
+<link rel="stylesheet" href="{% static 'messy/fediverse/messy-fediverse.css' %}">
+</template>
+
 <div id="messy-fediverse" class="messy-fediverse">
     {% if request.user.is_staff %}
     <nav class="messy-fediverse-nav">
@@ -12,5 +16,7 @@
     
     {% block main %}{% endblock %}
 </div>
+
+<template>example template</template>
 
 <script type="text/javascript" src="{% static 'messy/fediverse/messy-fediverse.js' %}" defer></script>

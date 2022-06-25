@@ -15,6 +15,7 @@ import json
 from os import path
 from urllib.parse import urlparse
 from django.utils.http import urlencode
+from datetime import datetime
 #from pprint import pprint
 
 class ActivityResponse(JsonResponse):
@@ -242,6 +243,7 @@ class Replies(View):
         )
     
     def get(self, request, rpath):
+        rpath = rpath.strip('/')
         proto = request_protocol(request)
         request_query_string = request.META.get('QUERY_STRING', '')
         if request_query_string:
@@ -259,11 +261,32 @@ class Replies(View):
                 'items': items
             })
         else:
-            items = fediverse_factory(request).get_replies(rpath, content=True)
-            form = ReplyForm()
-            return self.render_page(request, rpath, {'items': items, 'form': form})
+            data = {
+                'items': fediverse_factory(request).get_replies(rpath, content=True),
+                'form': ReplyForm(),
+                'summary': ''
+            }
+            
+            for item in data['items']:
+                if not data['summary'] and 'summary' in item and item['summary']:
+                    data['summary'] = item['summary']
+                
+                if item['published']:
+                    item['published'] = datetime.fromisoformat(item['published'].rstrip('Z'))
+            
+            if not data['summary']:
+                path_parts = urlparse(rpath).path.strip('/').split('/')
+                if len(path_parts) > 0:
+                    data['summary'] = path_parts[-1].capitalize()
+            
+            data['meta_json'] = json.dumps({
+                'title': f'Comments for {data["summary"]}'
+            })
+            
+            return self.render_page(request, rpath, data)
     
     def post(self, request, rpath):
+        rpath = rpath.strip('/')
         ## If federated reply
         if 'account' in request.POST:
             request_post = request.POST.copy()

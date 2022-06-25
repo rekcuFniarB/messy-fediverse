@@ -1,13 +1,17 @@
 {% extends 'messy/fediverse/base.html' %}
 
+{% block title %}{{ block.super }} {{ summary }}{% endblock title %}
+
 {% block main %}
 <section class="messy-fediverse-comments" data-parent-uri="{{ parent_uri }}">
+    <h3 class="messy-fediverse-parent-info">Comments for <a href="/{{ rpath }}/">{{ summary }}</a></h3>
+    
     <form method="post" action="{% url 'messy-fediverse:replies' rpath %}">
         <p>You can leave comment using your <a href="https://en.wikipedia.org/wiki/Fediverse" target="_blank" rel="noopener">fediverse</a> account.</p>
         {% csrf_token %}
 
         {{ form.as_p }}
-        <input type="submit" value="New comment">
+        <p><input type="submit" value="New comment"></p>
     </form>
     
 {% for item in items %}
@@ -15,19 +19,13 @@
         <header>
             <a href="{{ item.attributedTo }}" rel="author noopener" target="_blank">@{{ item.authorInfo.preferredUsername }}</a>
             
-            {% spaceless %}
-            <a href="{{ item.id }}" target="_blank" rel="noopener">
             {% if item.summary %}
-                <h4>{{ item.summary }}</h4>
-            {% else %}
-                #
+                <h4>Re: <a href="{{ item.id }}" target="_blank" rel="noopener">{{ item.summary }}</a></h4>
             {% endif %}
-            </a>
-            {% endspaceless %}
             
             {% spaceless %}
             <a href="{{ item.id }}" target="_blank" rel="noopener">
-                <time>{{ item.published }}</time>{# FIXME need pretty formatted #}
+                <time datetime="{{ item.published.isoformat }}">{{ item.published|date }} {{ item.published|time }}</time>
             </a>
             {% endspaceless %}
         </header>
@@ -48,4 +46,12 @@
     </article>
 {% endfor %}
 </section>
+
+
+{% if meta_json %}
+<script type="application/json" class="section-metadata" data-path="{{ request.path }}">{% autoescape off %}
+{{ meta_json }}
+{% endautoescape %}</script>
+{% endif %}
+
 {% endblock %}

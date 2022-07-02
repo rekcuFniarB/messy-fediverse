@@ -419,6 +419,24 @@ class Replies(View):
     
         else:
             raise BadRequest('Unknown form was submitted.')
+    
+    def delete(self, request, rpath):
+        if not request.user.is_staff:
+            raise PermissionDenied
+        
+        fediverse = fediverse_factory(request)
+        id = request.GET.get('id', None)
+        result = {'success': False}
+        if not id:
+            result['error'] = 'ID required'
+        else:
+            try:
+                fediverse.delete_reply(id)
+                result['success'] = True
+            except BaseException as error:
+                result['error'] = '\n'.join(error.args)
+        
+        return JsonResponse(result)
 
 @method_decorator(csrf_exempt, name='dispatch')
 class Inbox(View):

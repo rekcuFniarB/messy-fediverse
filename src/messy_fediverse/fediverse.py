@@ -538,6 +538,7 @@ class Fediverse:
         if path.isdir(replies_dir):
             for reply_file in path.os.listdir(replies_dir):
                 if reply_file.endswith('.reply.json'):
+                    reply_id = reply_file[:-len('.reply.json')]
                     reply_file = path.join(replies_dir, reply_file)
                     try:
                         with open(reply_file, 'rt') as f:
@@ -548,6 +549,8 @@ class Fediverse:
                                         reply['authorInfo'] = {'preferredUsername': path.basename(reply['attributedTo'].strip('/'))}
                                 if 'hash' not in reply:
                                     reply['hash'] = hex(abs(hash(reply['id'])))[2:]
+                                if 'localId' not in reply:
+                                    reply['localId'] = path.join('/', object_id, reply_id, '')
                                 replies.append(reply)
                             else:
                                 replies.append(reply['id'])
@@ -562,6 +565,17 @@ class Fediverse:
             replies.sort(key=lambda x: x['published'])
         
         return replies
+    
+    def delete_reply(self, localId):
+        filepath = path.join(self.__datadir__, localId.strip(' /') + '.reply.json')
+        if path.isfile(filepath):
+            if path.islink(filepath):
+                linkpath = path.realpath(filepath)
+                if path.isfile(linkpath):
+                    path.os.remove(linkpath)
+            return path.os.remove(filepath)
+        else:
+            raise BaseException(f'Not found "{localId}"')
     
     def get_following(self):
         '''

@@ -85,6 +85,9 @@ if (!!messyFediverse) {
         if (event.target.closest('button.reply-js')) {
             return this.replyToComment(event);
         }
+        if (event.target.closest('button.delete-js')) {
+            return this.deleteReply(event);
+        }
         if (event.target.closest('[data-ajax-target]')) {
             return this.ajaxLoader(event);
         }
@@ -97,6 +100,50 @@ if (!!messyFediverse) {
             var form = this.querySelector('form');
             form.elements.uri.value = parentComment.dataset.uri;
             form.dispatchEvent(new Event('submit', {cancelable: true, bubbles: true}));
+        }
+    }.bind(messyFediverse);
+    
+    messyFediverse.deleteReply = function(event) {
+        var comment = event.target.closest('[data-local-id]');
+        if (!!comment) {
+            event.preventDefault();
+            var form = this.querySelector('form');
+            var requestParams = {
+                id: comment.dataset.localId
+            }
+            // First hidden input
+            csrf = form.querySelector('input[type="hidden"]');
+            fetch(
+                form.action + '?' + new URLSearchParams(requestParams).toString(),
+                {
+                    method: 'DELETE',
+                    headers: {
+                        'X-CSRFToken': csrf.value,
+                        'X-Requested-With': 'XMLHttpRequest'
+                    }
+                }
+            )
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Request failed.');
+                }
+                return response.json();
+            })
+            .then(response => {
+                if (!!response.success) {
+                    comment.style.display = 'none';
+                } else {
+                    let error = 'Request failed.';
+                    if (!!response.error) {
+                        error = response.error;
+                    }
+                    throw new Error(error);
+                }
+            })
+            .catch(error => {
+                console.error('ERROR:', error);
+                alert(error);
+            });
         }
     }.bind(messyFediverse);
     

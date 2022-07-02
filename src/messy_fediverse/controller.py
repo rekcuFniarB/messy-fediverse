@@ -8,6 +8,7 @@ from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from django.templatetags.static import static as _staticurl
+from django.utils.html import strip_tags
 from .forms import InteractForm, InteractSearchForm, ReplyForm
 from .fediverse import Fediverse
 import requests
@@ -101,6 +102,62 @@ def log_request(request):
             
             BODY: {request.body.decode('utf-8', 'replace')}
             '''
+        )
+    else:
+        return False
+
+def email_notice(request, ap_object):
+    if 'type' in ap_object:
+        fediverse = fediverse_factory(request)
+        subj_parts = ['Fediverse', ap_object['type']]
+        summary = ap_object.get('summary', None)
+        if summary:
+            subj_parts.append(summary)
+        attributedTo = ap_object.get('attributedTo', None)
+        if attributedTo:
+            if 'author_info' not in ap_object:
+                ap_object['author_info'] = {}
+                try:
+                    ap_object['author_info'] = fediverse.get(attributedTo)
+                except:
+                    pass
+                
+                ap_object['author_info']['name@host'] = ''
+                if 'preferredUsername' in ap_object['author_info']:
+                    author_url = urlparse(ap_object['author_info']['id'])
+                    ap_object['author_info']['name@host'] = f'{ap_object["author_info"]["preferredUsername"]}@{author_url.netloc}'
+                    if not summary:
+                        subj_parts.append(ap_object['author_info']['name@host'])
+        
+        content = ap_object.get('content', '')
+        
+        url = ap_object.get('inReplyTo', ap_object.get('url', ap_object.get('id', '')))
+        if url and url.startswith('https://') and '"' not in url:
+            url = f'<a href="{url}" target="_blank">{url}</a>'
+        
+        message=f'''{content}<br>
+            {url}
+            <br>
+            <h2>Raw data:</h2>
+            <code><pre>{json.dumps(ap_object, indent=4)}</pre></code>
+            
+            <h2>Request debug info:</h2>
+            <code><pre>
+            GET: {request.META['QUERY_STRING']}
+            
+            POST: {request.POST.__str__()}
+            
+            META: {request.META.__str__()}
+            
+            BODY: {request.body.decode('utf-8', 'replace')}
+            </code></pre>
+        '''
+        
+        return mail_admins(
+            subject=' '.join(subj_parts),
+            fail_silently=not settings.DEBUG,
+            message=strip_tags(message),
+            html_message=message
         )
     else:
         return False
@@ -367,6 +424,8 @@ class Replies(View):
 class Inbox(View):
     def post(self, request):
         result = None
+        should_log_request = True
+        
         ## If we've received a JSON
         if is_post_json(request):
             data = json.loads(request.body)
@@ -378,8 +437,12 @@ class Inbox(View):
                         data['object']['requestMeta'][k] = request.META[k]
                 
                 result = fediverse_factory(request).process_object(data['object'])
+                data['object']['process_result'] = result
+                email_notice(request, data['object'])
+                should_log_request = False
         
-        log_request(request)
+        if should_log_request:
+            log_request(request)
         
         return JsonResponse({'success': bool(result)})
 

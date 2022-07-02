@@ -4,7 +4,18 @@
 
 {% block main %}
 <section class="messy-fediverse-comments" data-parent-uri="{{ parent_uri }}">
-    <h3 class="messy-fediverse-parent-info">Comments for <a href="/{{ rpath }}/">{{ summary }}</a></h3>
+    {% spaceless %}
+    <h3 class="messy-fediverse-parent-info">
+        {% if request.user.is_staff %}
+            <a href="{{ request.path }}">
+        {% endif %}
+        Comments
+        {% if request.user.is_staff %}
+            </a>
+        {% endif %}
+        for <a href="/{{ rpath }}/">{{ summary }}</a>
+    </h3>
+    {% endspaceless %}
     
     <form method="post" action="{% url 'messy-fediverse:replies' rpath %}">
         <p>You can leave comment using your <a href="https://en.wikipedia.org/wiki/Fediverse" target="_blank" rel="noopener">fediverse</a> account.</p>

@@ -85,6 +85,9 @@ if (!!messyFediverse) {
         if (event.target.closest('button.reply-js')) {
             return this.replyToComment(event);
         }
+        if (event.target.closest('[data-ajax-target]')) {
+            return this.ajaxLoader(event);
+        }
     }.bind(messyFediverse); // clicksHandler
     
     messyFediverse.replyToComment = function(event) {
@@ -94,6 +97,31 @@ if (!!messyFediverse) {
             var form = this.querySelector('form');
             form.elements.uri.value = parentComment.dataset.uri;
             form.dispatchEvent(new Event('submit', {cancelable: true, bubbles: true}));
+        }
+    }.bind(messyFediverse);
+    
+    messyFediverse.ajaxLoader = function(event) {
+        var eventTarget = event.target.closest('[data-ajax-target]');
+        if (!!eventTarget.dataset.ajaxTarget) {
+            var ajaxTarget = document.getElementById(eventTarget.dataset.ajaxTarget);
+            if (!!ajaxTarget) {
+                event.preventDefault();
+                event.stopPropagation();
+                fetch(eventTarget.href, {
+                    headers: {
+                        'X-Requested-With': 'XMLHttpRequest'
+                    }
+                })
+                .then(response => {
+                    return response.text();
+                })
+                .then(response => {
+                    var newContent = document.createElement('div');
+                    newContent.innerHTML = response;
+                    newContent = newContent.querySelector('#messy-fediverse-block-main,main,body') || newContent;
+                    ajaxTarget.innerHTML = newContent.innerHTML;
+                });
+            }
         }
     }.bind(messyFediverse);
     
@@ -125,7 +153,7 @@ if (!!messyFediverse) {
             for (let input of form.elements) {
                 if (!!input.name && !input.value && ['hidden', 'submit'].indexOf(input.type) === -1) {
                     let value = localStorage.getItem(`messyFediverseFormCache_${input.name}`);
-                    if (!!value) {
+                    if (value !== null) {
                         input.value = value;
                     }
                 }
@@ -137,7 +165,7 @@ if (!!messyFediverse) {
      * Caching form inputs
      */
     messyFediverse.cacheFormInput = function(event) {
-        if (!!event.target.name && !!event.target.value) {
+        if (!!event.target.name && typeof event.target.value !== 'undefined') {
             localStorage.setItem(`messyFediverseFormCache_${event.target.name}`, event.target.value);
         }
     }.bind(messyFediverse);

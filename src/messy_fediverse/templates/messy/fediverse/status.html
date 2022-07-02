@@ -2,28 +2,42 @@
 
 {% block main %}
 <article class="messy-fediverse messy-fediverse-status">
-    {% if summary %}
-        {% if url %}
-            <a href="{{ url }}" rel="noopener" target="_blank">
+    <header>
+        {% if summary %}
+            {% if url %}
+                <a href="{{ url }}" rel="noopener" target="_blank">
+            {% endif %}
+                <h2>{{ summary }}</h2>
+            {% if url %}
+                </a>
+            {% endif %}
         {% endif %}
-            <h2>{{ summary }}</h2>
-        {% if url %}
+        
+        {% if inReplyTo %}
+            <p><a href="{{ inReplyTo }}" target="_blank">Parent</a></p>
+        {% endif %}
+        
+        <p>
+            <a href="{% firstof url id '#' %}">
+                <time datetime="{{ published.isoformat }}">{{ published|date }} {{ published|time }}</time>
             </a>
+        </p>
+        
+        {% if reply_path %}
+            <p><a href="{{ reply_path }}" data-ajax-target="messy-fediverse-status-comments">comments</a></p>
         {% endif %}
-    {% endif %}
-    
-    {% if inReplyTo %}
-        <p><a href="{{ inReplyTo }}" target="_blank">Parent</a></p>
-    {% endif %}
-    
-    <p><time>{{ published }}</time></p>
+    </header>
     
     {# FIXME need to sanitize html somehow #}
     {% autoescape off %}
     <p>{{ content }}</p>
     {% endautoescape %}
     
-    <h3>Raw</h3>
-    <code><pre>{{ raw_json }}</pre></code>
+    {% if request.user.is_staff %}
+        <h3>Raw</h3>
+        <code><pre>{{ raw_json }}</pre></code>
+    {% endif %}
 </article>
+
+<section id="messy-fediverse-status-comments"></section>
 {% endblock %}

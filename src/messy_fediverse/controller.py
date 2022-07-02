@@ -16,6 +16,7 @@ from os import path
 from urllib.parse import urlparse
 from django.utils.http import urlencode
 from datetime import datetime
+import sys
 #from pprint import pprint
 
 class ActivityResponse(JsonResponse):
@@ -25,6 +26,10 @@ class ActivityResponse(JsonResponse):
 
 sentinel = object()
 __cache__ = {}
+
+def stderrlog(*msg):
+    if settings.DEBUG:
+        print(*msg, file=sys.stderr, flush=True)
 
 def reverse(name, args=None, kwargs=None):
     '''
@@ -38,7 +43,22 @@ def reverse(name, args=None, kwargs=None):
         from django.urls import reverse
         __cache__['reverse'] = reverse
     
-    return __cache__['reverse'](f"{__cache__['app_name']}:{name}", args=args, kwargs=kwargs)
+    if type(kwargs) is dict and 'rpath' in kwargs:
+        kwargs['rpath'] = kwargs['rpath'].strip('/')
+    
+    result =  __cache__['reverse'](f"{__cache__['app_name']}:{name}", args=args, kwargs=kwargs)
+    if result and result.endswith('//'):
+        result = result.rstrip('/') + '/'
+    
+    return result
+
+def reversepath(name, path):
+    '''
+    reverse() wrapper
+    name: url name
+    path: rpath param.
+    '''
+    return reverse(name, kwargs={'rpath': path})
 
 def staticurl(request, path):
     path = _staticurl(path)
@@ -227,7 +247,8 @@ class Replies(View):
         request_query_string = request.META.get('QUERY_STRING', '')
         if request_query_string:
             request_query_string = f'?{request_query_string}'
-        return f"{proto}://{request.site.domain}{reverse('replies', kwargs={'rpath': rpath})}{request_query_string}"
+        #return f"{proto}://{request.site.domain}{reversepath('replies', rpath)}{request_query_string}"
+        return f"{proto}://{request.site.domain}/{rpath}/{request_query_string}"
     
     def render_page(self, request, rpath, data_update={}):
         data = {
@@ -250,22 +271,26 @@ class Replies(View):
             request_query_string = f'?{request_query_string}'
         
         content = 'content' in request.GET
+        fediverse = fediverse_factory(request)
         
         if is_json_request(request):
-            items = fediverse_factory(request).get_replies(rpath, content=content)
+            items = fediverse.get_replies(rpath, content=content)
             return ActivityResponse({
                 '@context': "https://www.w3.org/ns/activitystreams",
                 'id': self.parent_uri(request, rpath),
                 'type': 'CollectionPage',
-                'partOf': f"{proto}://{request.site.domain}{reverse('replies', kwargs={'rpath': rpath})}",
+                'partOf': f"{proto}://{request.site.domain}{reversepath('replies', rpath)}",
                 'items': items
             })
         else:
             data = {
-                'items': fediverse_factory(request).get_replies(rpath, content=True),
+                'items': fediverse.get_replies(rpath, content=True),
                 'form': ReplyForm(),
                 'summary': ''
             }
+            
+            context_root_url = reversepath('dumb', 'context').rstrip('/')
+            context = None
             
             for item in data['items']:
                 if not data['summary'] and 'summary' in item and item['summary']:
@@ -273,6 +298,16 @@ class Replies(View):
                 
                 if item['published']:
                     item['published'] = datetime.fromisoformat(item['published'].rstrip('Z'))
+                
+                if not context:
+                    if 'context' in item and item['context'].startswith(fediverse.id):
+                        context = item['context']
+                    elif 'conversation' in item and item['conversation'].startswith(fediverse.id):
+                        context = item['conversation']
+            
+            if context:
+                data['parent_path'] = '/' + urlparse(context).path.replace(context_root_url, '', 1).lstrip('/')
+                data['parent_object'] = fediverse.read(data['parent_path'] + '.json')
             
             if not data['summary']:
                 path_parts = urlparse(rpath).path.strip('/').split('/')
@@ -444,37 +479,33 @@ def status(request, rpath):
     if 'object' in data and type(data['object']) is dict:
         data = data['object']
     
+    if 'conversation' not in data and 'context' not in data:
+        data['context'] = data['conversation'] = data['id']
+    
     if is_json_request(request):
         if '@context' not in data:
             data['@context'] = fediverse.user.get('@context')
         
         if 'replies' not in data:
-            data['replies'] = {
-                'id': f'{proto}://{request.site.domain}{reverse("replies", kwargs={"rpath": request.path.strip("/")})}',
-                'type': "Collection",
-                'first': {
-                    'type': 'CollectionPage',
-                    'next': f'{proto}://{request.site.domain}{reverse("replies", kwargs={"rpath": request.path.strip("/")})}?next',
-                    'partOf': f'{proto}://{request.site.domain}{reverse("replies", kwargs={"rpath": request.path.strip("/")})}',
-                    'items': []
-                }
-            }
-        
-        if 'conversation' not in data and 'context' not in data:
-            data['context'] = data['conversation'] = data['id']
+            data['replies'] = f'{proto}://{request.site.domain}{reversepath("replies", request.path)}'
         
         return ActivityResponse(data)
-        #return redirect(path.join(settings.MEDIA_URL, request.path.strip('/') + '.json'))
     
     if request.user.is_staff:
         data['raw_json'] = json.dumps(data, indent=4)
-        return render(request, 'messy/fediverse/status.html', data)
     elif 'inReplyTo' in data and data['inReplyTo']:
         return redirect(data['inReplyTo'])
     elif 'url' in data and data['url'] and data['url'] != data['id']:
         return redirect(data['url'])
-    else:
-        raise Http404(f'Status {path} not found.')
+    
+    if data['context'].startswith(fediverse.id):
+        data['reply_path'] = reversepath('replies', urlparse(data['id']).path)
+    
+    if 'published' in data and data['published']:
+        data['published'] = datetime.fromisoformat(data['published'].rstrip('Z'))
+    
+    return render(request, 'messy/fediverse/status.html', data)
+    #raise Http404(f'Status {path} not found.')
 
 class Interact(View):
     def get(self, request):
@@ -542,8 +573,8 @@ class Interact(View):
                 context = result['object'].get('context', result['object'].get('conversation', None))
                 if context and context.startswith(fediverse.id):
                     context = urlparse(context).path
-                    redirect_path = context.replace(reverse('dumb', kwargs={'rpath': 'context'}), '').strip('/')
-                    redirect_path = reverse('replies', kwargs={'rpath': redirect_path})
+                    redirect_path = context.replace(reversepath('dumb', 'context'), '').strip('/')
+                    redirect_path = reversepath('replies', redirect_path)
                 return redirect(redirect_path)
         
         data['form'] = form

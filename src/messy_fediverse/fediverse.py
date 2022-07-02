@@ -494,7 +494,7 @@ class Fediverse:
         else:
             inReplyTo = urlparse(apobject['inReplyTo'])
         
-        autor_info = None
+        author_info = None
         if 'attributedTo' in apobject:
             try:
                 author_info = self.get(apobject['attributedTo'])
@@ -557,8 +557,9 @@ class Fediverse:
         if 'context/' not in object_id:
             replies.extend(self.get_replies(path.join('context', object_id), content))
         
-        ## Sorting by published time
-        replies.sort(key=lambda x: x['published'])
+        if content:
+            ## Sorting by published time
+            replies.sort(key=lambda x: x['published'])
         
         return replies
     

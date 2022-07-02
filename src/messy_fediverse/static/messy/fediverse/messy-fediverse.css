@@ -22,3 +22,7 @@
 .messy-fediverse-nav li {
     margin-right: 1.5rem;
 }
+.messy-fediverse-status header {
+    display: flex;
+    justify-content: space-between;
+}

@@ -19,4 +19,4 @@ class ReplyForm(forms.Form):
         required=False
     )
     
-    account.widget.attrs.update({'placeholder': 'Example: username@example.com'})
+    account.widget.attrs.update({'placeholder': 'Example: username@mastodon.online'})

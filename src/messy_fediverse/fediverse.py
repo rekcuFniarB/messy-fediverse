@@ -546,7 +546,13 @@ class Fediverse:
                             if content:
                                 if 'authorInfo' not in reply:
                                     if 'attributedTo' in reply:
-                                        reply['authorInfo'] = {'preferredUsername': path.basename(reply['attributedTo'].strip('/'))}
+                                        if reply['attributedTo'] == self.id:
+                                            reply['authorInfo'] = {'preferredUsername': self.preferredUsername}
+                                        else:
+                                            try:
+                                                reply['authorInfo'] = self.get(reply['attributedTo'])
+                                            except:
+                                                reply['authorInfo'] = {'preferredUsername': path.basename(reply['attributedTo'].strip('/'))}
                                 if 'hash' not in reply:
                                     reply['hash'] = hex(abs(hash(reply['id'])))[2:]
                                 if 'localId' not in reply:

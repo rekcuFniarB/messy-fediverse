@@ -156,7 +156,7 @@ def fediverse_factory(request):
         
         
         for k in settings.MESSY_FEDIVERSE:
-            if k in user:
+            if k != k.upper():
                 user[k] = settings.MESSY_FEDIVERSE[k]
         
         __cache__['fediverse'] = Fediverse(

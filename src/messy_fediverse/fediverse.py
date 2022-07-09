@@ -225,8 +225,19 @@ class Fediverse:
         userids = []
         links = []
         result = {
-            'tag': []
+            'tag': [],
+            'attachment': []
         }
+        
+        img_types = {
+            'png': 'image/png',
+            'jpg': 'image/jpeg',
+            'jpeg': 'image/jpeg',
+            'svg': 'image/svg',
+            'gif': 'image/gif',
+            'webp': 'image/webp'
+        }
+        
         for word in words:
             word = word.strip('@#')
             if '@' in word:
@@ -241,11 +252,21 @@ class Fediverse:
             url = urlparse(link)
             name = path.basename(url.path.strip('/'))
             if name:
-                result['tag'].append({
-                    'href': link,
-                    'name': f'#{name}',
-                    'type': 'Hashtag'
-                })
+                link_ext = name.split('.')[-1].lower()
+                
+                if link_ext in img_types:
+                    result['attachment'].append({
+                        'type': 'Document',
+                        'mediaType': img_types[link_ext],
+                        'url': link
+                    })
+                else:
+                    result['tag'].append({
+                        'href': link,
+                        'name': f'#{name}',
+                        'type': 'Hashtag'
+                    })
+                
                 content = content.replace(link, f'<a href="{link}" class="mention hashtag" rel="tag">#<span>{name}</span></a></p>')
         
         for userid in userids:
@@ -379,6 +400,7 @@ class Fediverse:
         parse_result = self.parse_tags(data['content'])
         data['content'] = parse_result['content']
         data['tag'].extend(parse_result['tag'])
+        data['attachment'].extend(parse_result['attachment'])
         
         ## Presave, if receiving side wants to check if status exists
         self.save(data['id'] + '.json', data)
@@ -443,6 +465,7 @@ class Fediverse:
         parse_result = self.parse_tags(data['content'])
         data['content'] = parse_result['content']
         data['tag'].extend(parse_result['tag'])
+        data['attachment'].extend(parse_result['attachment'])
         
         save_path = f'{data["id"]}.json'
         

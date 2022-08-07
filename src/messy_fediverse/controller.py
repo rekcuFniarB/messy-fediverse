@@ -505,6 +505,14 @@ class Inbox(View):
                 await email_notice(request, data['object'])
                 should_log_request = False
         
+        if 'type' in data and data['type'] == 'Delete':
+            should_log_request = False
+            return JsonResponse({
+                'success': True,
+                'status': 'success',
+                'message': "Fuck off, I don't give a fuck what you delete."
+            })
+        
         if should_log_request:
             log_request(request, data)
         

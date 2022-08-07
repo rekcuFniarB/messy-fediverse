@@ -96,20 +96,38 @@ def request_protocol(request):
         proto = 'https'
     return proto
 
-def log_request(request):
+def log_request(request, data=None):
     if settings.MESSY_FEDIVERSE.get('LOG_REQUESTS_TO_MAIL', False) and request.method == 'POST':
-        return mail_admins(
-            subject=f'SOCIAL {request.method} REQUEST: {request.path}',
-            fail_silently=not settings.DEBUG,
-            message=f'''
+        subject=f'SOCIAL {request.method} REQUEST: {request.path}'
+        body = None
+        
+        if data:
+            user_host = ''
+            if '_actor' in data and 'user@host' in data['_actor']:
+                user_host = data['_actor']['user@host']
+            
+            subject = f'Fediverse {data["type"]} {user_host}'
+            body = json.dumps(data, indent=4)
+            body = f'<code><pre>{body}</pre></code>'
+        
+        if not body:
+            body = request.body.decode('utf-8', 'replace')
+        
+        message = f'''
             GET: {request.META['QUERY_STRING']}
             
             POST: {request.POST.__str__()}
             
-            META: {request.META.__str__()}
+            BODY:{body}
             
-            BODY: {request.body.decode('utf-8', 'replace')}
-            '''
+            META: {request.META.__str__()}
+        '''
+        
+        return mail_admins(
+            subject=subject,
+            fail_silently=not settings.DEBUG,
+            message=strip_tags(message),
+            html_message=message
         )
     else:
         return False
@@ -463,6 +481,7 @@ class Inbox(View):
     async def post(self, request):
         result = None
         should_log_request = True
+        data = None
         
         ## If we've received a JSON
         if is_post_json(request):
@@ -474,14 +493,20 @@ class Inbox(View):
                     if k.startswith('HTTP_'):
                         data['object']['requestMeta'][k] = request.META[k]
                 
-                result = await fediverse_factory(request).process_object(data['object'])
-                data['object']['process_result'] = result
+                fediverse = fediverse_factory(request)
+                
+                async with aiohttp.ClientSession() as session:
+                    fediverse.http_session(session)
+                    result = await fediverse.process_object(data['object'])
+                    data['object']['process_result'] = result
+                    if 'actor' in data:
+                        data['_actor'], = await fediverse.gather_http_responses(fediverse.get(data['actor'], session))
                 
                 await email_notice(request, data['object'])
                 should_log_request = False
         
         if should_log_request:
-            log_request(request)
+            log_request(request, data)
         
         return JsonResponse({'success': bool(result)})
 

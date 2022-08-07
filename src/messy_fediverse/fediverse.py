@@ -220,6 +220,11 @@ class Fediverse:
             if isinstance(result, BaseException):
                 ## We return exception as string FIXME
                 results[n] = str(result)
+            elif type(result) is dict:
+                if 'type' in result and result['type'] == 'Person':
+                    url = urlparse(result['id'])
+                    if 'preferredUsername' in result:
+                        result['user@host'] = f'{result["preferredUsername"]}@{url.hostname}'
         
         return results
     

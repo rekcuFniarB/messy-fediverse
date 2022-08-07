@@ -1,4 +1,6 @@
 import requests
+import aiohttp
+import asyncio
 from os import path
 from datetime import datetime
 import json
@@ -9,6 +11,8 @@ from OpenSSL import crypto
 from hashlib import sha256
 import re
 import syslog
+import sys
+from functools import partial
 
 class Fediverse:
     def __init__(self, user, privkey, pubkey, headers=None, datadir='/tmp', cache=None, debug=False):
@@ -33,8 +37,23 @@ class Fediverse:
     
     def syslog(self, *msg):
         if self.__DEBUG__:
-            msg = '\n'.join(msg)
+            msg = '\n '.join(msg)
             syslog.syslog(syslog.LOG_INFO, f'MESSY SOCIAL: {msg}')
+    
+    def stderrlog(self, *msg):
+        if self.__DEBUG__:
+            print(*msg, file=sys.stderr, flush=True)
+    
+    def cache_set(self, name, value):
+        if self.__cache__ is not None:
+            if hasattr(value, 'result') and callable(value.result):
+                ## For future like objects
+                value = value.result()
+                if type(value) is list:
+                    value = value[0]
+                
+                ## FIXME cannot reuse already awaited coroutine
+            return self.__cache__.set(name, value)
     
     @property
     def user(self):
@@ -116,59 +135,115 @@ class Fediverse:
             result = path.os.unlink(filepath)
         return result
     
-    def get(self, url, *args, **kwargs):
+    def get(self, url, session=None, *args, **kwargs):
         '''
         Making request to specified URL.
         Requests are cached if a cache object was passed to constructor.
         '''
-        data = None
         
-        ## Plume may return multiple values in "attributedTo"
-        if type(url) is list:
-            url = url[0]
+        if session is None:
+            session = self.http_session()
         
-        if self.__cache__ is not None:
-            data = self.__cache__.get(url, None)
-        
-        if data is None:
-            if self.__headers__ is not None:
-                headers = self.__headers__.copy()
-                if 'headers' in kwargs:
-                    headers.update(kwargs['headers'])
-                kwargs['headers'] = headers
-            
-            if url.endswith('.json.json'):
-                url = url[:-len('.json')]
-            
-            r = requests.get(url, *args, **kwargs)
-            
-            if not r.ok:
-                try:
-                    self.syslog(f'BAD RESPONSE FOR GET FROM URL "{url}": "{r.text}"')
-                    r.raise_for_status()
-                except BaseException as e:
-                    if r.text and e.args:
-                        e.args = (*e.args, r.text)
-                    raise e
-            
-            if 'application/' in r.headers['content-type'] and 'json' in r.headers['content-type']:
-                try:
-                    data = r.json()
-                except:
-                    data = r.text
-            else:
-                data = r.text
-            
-            if self.__cache__ is not None and data:
-                self.__cache__.set(url, data)
-        
-        return data
+        return self.request(url, session, method='get', *args, **kwargs)
     
-    def post(self, url, *args, **kwargs):
+    def post(self, url, session=None, *args, **kwargs):
         '''
         Make POST request to fediverse server
         url: string URL
         Accepts same args as requests's module "post" method.
+        '''
+        
+        if session is None:
+            session = self.http_session()
+        
+        return self.request(url, session, method='post', *args, **kwargs)
+    
+    def is_coroutine(self, something):
+        return str(something).startswith('<coroutine object ')
+    
+    def mkcoroutine(self, result=None):
+        '''
+        Creates coroutine
+        result: what coroutine should return
+        '''
+        if self.is_coroutine(result):
+            return result
+        else:
+            async def coro(result):
+                return result
+            return coro(result)
+    
+    async def gather_http_responses(self, *tasks):
+        '''
+        Gathers multiple async requests.
+        tasks: list of tasks or coroutines
+        '''
+        #loop = asyncio.get_running_loop()
+        
+        tasks = await asyncio.gather(*tasks, return_exceptions=True)
+        results = []
+        
+        for response in tasks:
+            result = None
+            if isinstance(response, BaseException):
+                ## For gather
+                result = self.mkcoroutine(response)
+            #elif self.is_coroutine(response):
+                #self.syslog('WTF COROUTINE', str(response), str(await response))
+            elif not response.ok:
+                #response_text = await response.text()
+                try:
+                    #self.syslog(f'BAD RESPONSE FOR POST TO URL "{response.url}": "{response_text}"')
+                    response.raise_for_status()
+                except BaseException as e:
+                    e.args = (*e.args, f'URL: {response.url}')
+                    result = self.mkcoroutine(e)
+            elif 'application/' in response.headers['content-type'] and 'json' in response.headers['content-type']:
+                ## FIXME Probably try/catch will not work here
+                try:
+                    result = response.json()
+                except:
+                    result = response.text()
+            else:
+                result = response.text()
+            
+            results.append(result)
+        
+        results = await asyncio.gather(*results, return_exceptions=True)
+        
+        for response in tasks:
+            ## Calling close() if object has such method
+            ## response may be an exception object. In this case we just call bool()
+            getattr(response, 'close', bool)()
+        
+        for n, result in enumerate(results):
+            if isinstance(result, BaseException):
+                ## We return exception as string FIXME
+                results[n] = str(result)
+        
+        return results
+    
+    def http_session(self, session=None):
+        if not hasattr(self, '__http_session__'):
+            setattr(self, '__http_session__', None)
+        
+        if session is not None:
+            if self.__http_session__ is not None and not self.__http_session__.closed:
+                ## FIXME RuntimeWarning: coroutine 'ClientSession.close' was never awaited
+                self.__http_session__.close()
+            self.__http_session__ = session
+        elif self.__http_session__ is None or self.__http_session__.closed:
+            self.__http_session__ = aiohttp.ClientSession()
+        
+        return self.__http_session__
+    
+    def request(self, url, session, method='get', *args, **kwargs):
+        '''
+        Make async request to fediverse server
+        url: string URL
+        session: aiohttp session
+        method: 'get' | 'post' | e.t.c.
+        **kwargs: other kwargs that aiohttp accepts
         '''
         
         if self.__headers__ is not None:
@@ -179,6 +254,20 @@ class Fediverse:
         
         if url.endswith('.json.json'):
             url = url[:-len('.json')]
+        
+        data = None
+        
+        ## Plume may return multiple values in "attributedTo"
+        if type(url) is list:
+            url = url[0]
+        
+        #if self.__cache__ is not None and method == 'get':
+            #data = self.__cache__.get(url, None)
+        
+        ## If got result from the cache
+        if data is not None:
+            return self.mkcoroutine(data)
+            #return data
         
         if 'json' in kwargs and type(kwargs['json']) is dict:
             if 'object' in kwargs['json'] and 'published' in kwargs['json']['object']:
@@ -200,27 +289,19 @@ class Fediverse:
             kwargs['headers']['Digest'] = 'sha-256=' + b64encode(sha256(kwargs['data'].encode('utf-8')).digest()).decode('utf-8')
             kwargs['headers']['Signature'] = self.sign(url, kwargs['headers'])
         
-        r = requests.post(url, *args, **kwargs)
-        if not r.ok:
-            try:
-                self.syslog(f'BAD RESPONSE FOR POST TO URL "{url}": "{r.text}"')
-                r.raise_for_status()
-            except BaseException as e:
-                if r.text and e.args:
-                    e.args = (*e.args, r.text)
-                raise e
+        ## Returns coroutine
+        result_coro = getattr(session, method)(url, timeout=5.0, *args, **kwargs)
         
-        if 'application/' in r.headers['content-type'] and 'json' in r.headers['content-type']:
-            try:
-                data = r.json()
-            except:
-                data = r.text
-        else:
-            data = r.text
+        ## FIXME need workaround for cache support
+        #if method == 'get':
+            #response = self.gather_http_responses(result_coro)
+            #task = asyncio.create_task(response)
+            #task.add_done_callback(partial(self.cache_set, url))
+            #return asyncio.create_task(result_coro)
         
-        return data
+        return result_coro
     
-    def parse_tags(self, content):
+    async def parse_tags(self, content):
         words = self._rewhitespace.split(content)
         userids = []
         links = []
@@ -269,26 +350,30 @@ class Fediverse:
                 
                 content = content.replace(link, f'<a href="{link}" class="mention hashtag" rel="tag">#<span>{name}</span></a></p>')
         
+        tasks = []
         for userid in userids:
             username, server = userid.split('@')
             if username and server:
-                try:
-                    ## FIXME consider using async requests
-                    webfinger = self.get(f'https://{server}/.well-known/webfinger?resource=acct:{userid}')
-                    if type(webfinger) is dict and 'aliases' in webfinger and type(webfinger['aliases']) is list and len(webfinger['aliases']) > 0:
-                        result['tag'].append({
-                            'href': webfinger['aliases'][0],
-                            'name': f'@{userid}',
-                            'type': 'Mention'
-                        })
-                        content = content.replace(userid, f'<span class="h-card"><a class="u-url mention" href="{webfinger["aliases"][0]}" rel="ugc">@<span>{username}</span></a></span>')
-                except:
-                    pass
+                tasks.append(self.get(f'https://{server}/.well-known/webfinger?resource=acct:{userid}'))
+        
+        tasks = await self.gather_http_responses(*tasks)
+        
+        for response in tasks:
+            idx = tasks.index(response)
+            userid = userids[idx]
+            username, server = userid.split('@')
+            if type(response) is dict and 'aliases' in response and type(response['aliases']) is list and len(response['aliases']) > 0:
+                result['tag'].append({
+                    'href': response['aliases'][0],
+                    'name': f'@{userid}',
+                    'type': 'Mention'
+                })
+                content = content.replace(userid, f'<span class="h-card"><a class="u-url mention" href="{response["aliases"][0]}" rel="ugc">@<span>{username}</span></a></span>')
         
         result['content'] = content
         return result
     
-    def mention(self, activity):
+    async def mention(self, activity):
         '''
         Sends copy of status to all mentioned users.
         activity: dict, activity data.
@@ -297,17 +382,18 @@ class Fediverse:
             return False
         
         endpoints = []
+        results = []
         for tag in activity['object']['tag']:
             if tag['type'] == 'Mention':
-                try:
-                    user = self.get(tag['href'])
-                    if user and 'endpoints' in user and 'sharedInbox' in user['endpoints']:
-                        if user['endpoints']['sharedInbox'] not in endpoints:
-                            endpoints.append(user['endpoints']['sharedInbox'])
-                        if user['id'] not in activity['object']['cc'] and user['id'] not in activity['object']['to']:
-                            activity['object']['cc'].append(user['id'])
-                except:
-                    pass
+                results.append(self.get(tag['href']))
+        results = await self.gather_http_responses(*results)
+        
+        for user in results:
+            if type(user) is dict and 'endpoints' in user and 'sharedInbox' in user['endpoints']:
+                if user['endpoints']['sharedInbox'] not in endpoints:
+                    endpoints.append(user['endpoints']['sharedInbox'])
+                if user['id'] not in activity['object']['cc'] and user['id'] not in activity['object']['to']:
+                    activity['object']['cc'].append(user['id'])
         
         activity['cc'] = activity['object']['cc']
         
@@ -315,13 +401,11 @@ class Fediverse:
         activity['object']['mentionResults'] = []
         
         for endpoint in endpoints:
-            try:
-                result = self.post(endpoint, json=activity)
-                results.append(result)
-                activity['object']['mentionResults'].append((endpoint, result))
-            except BaseException as e:
-                activity['object']['mentionResults'].append((endpoint, e.__str__()))
-                pass
+            results.append(self.post(endpoint, json=activity))
+        
+        results = await self.gather_http_responses(*results)
+        for n, result in enumerate(results):
+            activity['object']['mentionResults'].append((endpoints[n], result))
         
         return results
     
@@ -360,7 +444,7 @@ class Fediverse:
         
         return activity
     
-    def new_status(self, message, subject='', url=None):
+    async def new_status(self, message, subject='', url=None):
         '''
         Create new status.
         message: string message text
@@ -397,7 +481,7 @@ class Fediverse:
             "attachment": []
         }
         
-        parse_result = self.parse_tags(data['content'])
+        parse_result = await self.parse_tags(data['content'])
         data['content'] = parse_result['content']
         data['tag'].extend(parse_result['tag'])
         data['attachment'].extend(parse_result['attachment'])
@@ -406,19 +490,19 @@ class Fediverse:
         self.save(data['id'] + '.json', data)
         activity = self.activity(object=data)
         ## Send mentions
-        self.mention(activity)
+        await self.mention(activity)
         ## Resave with result
         self.save(data['id'] + '.json', data)
         return activity
     
-    def reply(self, source, message, subject='', url=None):
+    async def reply(self, source, message, subject='', url=None):
         '''
         Send "reply" request to remote fediverse server.
         source: dict, sending source information.
         message: string
         Returns string or dict if response was JSON.
         '''
-        remote_author = self.get(source['attributedTo'])
+        remote_author, = await self.gather_http_responses(self.get(source['attributedTo']))
         remote_author_url = urlparse(remote_author['id'])
         
         uniqid = self.uniqid()
@@ -462,7 +546,7 @@ class Fediverse:
             "attachment": []
         }
         
-        parse_result = self.parse_tags(data['content'])
+        parse_result = await self.parse_tags(data['content'])
         data['content'] = parse_result['content']
         data['tag'].extend(parse_result['tag'])
         data['attachment'].extend(parse_result['attachment'])
@@ -484,7 +568,7 @@ class Fediverse:
         
         activity = self.activity(object=data)
         ## Send mentions
-        self.mention(activity)
+        await self.mention(activity)
         ## Resave with result
         self.save(save_path, data)
         return activity
@@ -506,7 +590,7 @@ class Fediverse:
         sign = b64encode(crypto.sign(pkey, str2sign, 'sha256')).decode('utf-8')
         return f'keyId="{self.__user__["publicKey"]["id"]}",algorithm="rsa-sha256",headers="(request-target) host date digest",signature="{sign}"'
     
-    def save_reply(self, apobject):
+    async def save_reply(self, apobject):
         context = apobject.get('context', None)
         conversation = apobject.get('conversation', None)
         
@@ -520,7 +604,7 @@ class Fediverse:
         author_info = None
         if 'attributedTo' in apobject:
             try:
-                author_info = self.get(apobject['attributedTo'])
+                author_info, = await self.gather_http_responses(self.get(apobject['attributedTo']))
             except:
                 pass
             
@@ -531,7 +615,7 @@ class Fediverse:
         self.save(savepath, apobject)
         return savepath
     
-    def process_object(self, apobject):
+    async def process_object(self, apobject):
         '''
         Process object (usually activity from federated instances).
         apobject: activitypub object, dict
@@ -543,11 +627,11 @@ class Fediverse:
             if apobject['type'] == 'Note':
                 ## If we've received a reply message
                 if apobject.get('inReplyTo', None):
-                    result = self.save_reply(apobject)
+                    result = await self.save_reply(apobject)
         
         return result
     
-    def get_replies(self, object_id, content=False):
+    async def get_replies(self, object_id, content=False):
         '''
         Get replies for status
         id: string, status id.
@@ -556,7 +640,7 @@ class Fediverse:
         '''
         replies = []
         object_id = urlparse(object_id).path.strip(' /')
-        
+        ids = []
         replies_dir = path.join(self.__datadir__, object_id)
         if path.isdir(replies_dir):
             for reply_file in path.os.listdir(replies_dir):
@@ -566,6 +650,12 @@ class Fediverse:
                     try:
                         with open(reply_file, 'rt') as f:
                             reply = json.load(f)
+                            
+                            if reply['id'] in ids:
+                                continue
+                            
+                            ids.append(reply['id'])
+                            
                             if content:
                                 if 'authorInfo' not in reply:
                                     if 'attributedTo' in reply:
@@ -573,7 +663,7 @@ class Fediverse:
                                             reply['authorInfo'] = {'preferredUsername': self.preferredUsername}
                                         else:
                                             try:
-                                                reply['authorInfo'] = self.get(reply['attributedTo'])
+                                                reply['authorInfo'], = await self.gather_http_responses(self.get(reply['attributedTo']))
                                             except:
                                                 reply['authorInfo'] = {'preferredUsername': path.basename(reply['attributedTo'].strip('/'))}
                                 if 'hash' not in reply:
@@ -587,7 +677,7 @@ class Fediverse:
                         pass
         
         if 'context/' not in object_id:
-            replies.extend(self.get_replies(path.join('context', object_id), content))
+            replies.extend(await self.get_replies(path.join('context', object_id), content))
         
         if content:
             ## Sorting by published time
@@ -623,24 +713,24 @@ class Fediverse:
                         pass
         return result
     
-    def follow(self, user_id):
+    async def follow(self, user_id):
         '''
         Send follow request
         user_id: fediverse user URI
         '''
-        remote_author = self.get(user_id)
+        remote_author, = await self.gather_http_responses(self.get(user_id))
         
         activity = self.activity(type='Follow', object=remote_author['id'], to=[remote_author['id']])
         
         remote_author['followRequest'] = activity
         
-        activity['result'] = self.post(remote_author['inbox'], json=activity)
+        activity['result'], = await self.gather_http_responses(self.post(remote_author['inbox'], json=activity))
         ## Not checking result, mastodon just replies with empty response
         filename = path.join('following', sha256(user_id.encode('utf-8')).hexdigest() + '.json')
         return self.save(filename, remote_author)
     
-    def unfollow(self, user_id):
-        remote_author = self.get(user_id)
+    async def unfollow(self, user_id):
+        remote_author, = await self.gather_http_responses(self.get(user_id))
         data = {
             'id': path.join(self.id, 'activity', self.uniqid(), ''),
             'actor': self.id,
@@ -653,7 +743,7 @@ class Fediverse:
         
         activity = self.activity(object=data, type='Undo', to=[remote_author['id']])
         
-        result = self.post(remote_author['inbox'], json=activity)
+        result, = await self.gather_http_responses(self.post(remote_author['inbox'], json=activity))
         
         filename = path.join('following', sha256(user_id.encode('utf-8')).hexdigest() + '.json')
         return self.remove(filename)

@@ -1,14 +1,21 @@
 import syslog
 from django.http import JsonResponse
 from django.core.exceptions import PermissionDenied #, BadRequest
-from .controller import fediverse_factory, root_json
+from .controller import fediverse_factory, root_json, request_user_is_staff
 from django.conf import settings
 from django.urls import resolve, reverse
 from OpenSSL import crypto
 from base64 import b64decode
 from .urls import app_name
 import re
+import sys
 from datetime import datetime
+from django.utils.decorators import sync_and_async_middleware
+import aiohttp
+
+def stderrlog(*msg):
+    if settings.DEBUG:
+        print(*msg, file=sys.stderr, flush=True)
 
 class SysLog:
     '''
@@ -133,6 +140,7 @@ class WrapIntoStatus:
         
         return response
 
+@sync_and_async_middleware
 class VerifySignature:
     '''
     Verifying signature
@@ -145,10 +153,10 @@ class VerifySignature:
         ## Calling next middleware or view if no errors above
         return self.get_response(request)
     
-    def process_view(self, request, view_func, view_args, view_kwargs):
+    async def process_view(self, request, view_func, view_args, view_kwargs):
         ## Whe check only views which have csrf_exempt because only those views
         ## are for requests from federated instances.
-        if (request.method == 'POST' and not request.user.is_staff and
+        if (request.method == 'POST' and not await request_user_is_staff(request) and
                 getattr(view_func, 'csrf_exempt', False) and request.resolver_match and request.resolver_match.app_name == app_name and
                 not settings.MESSY_FEDIVERSE.get('NO_VERIFY_SIGNATURE', False)):
             signature_string = request.headers.get('signature', None)
@@ -167,14 +175,16 @@ class VerifySignature:
                 return self.response_error(request, 'Unsupported signature algorithm')
             
             fediverse = fediverse_factory(request)
-            try:
-                actor = fediverse.get(signature['keyId'])
-            except BaseException as e:
-                if settings.DEBUG:
-                    ## Raise original exception (probably HTTPError)
-                    raise e
-                else:
-                    raise PermissionDenied(*e.args)
+            async with aiohttp.ClientSession() as session:
+                try:
+                    actor = await fediverse.gather_http_responses(fediverse.get(signature['keyId'], session=session))
+                    actor = actor[0]
+                except BaseException as e:
+                    if settings.DEBUG:
+                        ## Raise original exception (probably HTTPError)
+                        raise e
+                    else:
+                        raise PermissionDenied(*e.args)
             
             if type(actor) is not dict:
                 return self.response_error(request, f'Actor verify failed: {actor}')

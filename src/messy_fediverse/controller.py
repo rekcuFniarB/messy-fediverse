@@ -18,6 +18,8 @@ from urllib.parse import urlparse
 from django.utils.http import urlencode
 from datetime import datetime
 import sys
+from asgiref.sync import sync_to_async
+import aiohttp
 #from pprint import pprint
 
 class ActivityResponse(JsonResponse):
@@ -31,6 +33,12 @@ __cache__ = {}
 def stderrlog(*msg):
     if settings.DEBUG:
         print(*msg, file=sys.stderr, flush=True)
+
+@sync_to_async
+def request_user_is_staff(request):
+    ## We can't just use request.user.is_staff from async views
+    ## due to lazy executions, so we get errors.
+    return request.user.is_staff
 
 def reverse(name, args=None, kwargs=None):
     '''
@@ -106,7 +114,7 @@ def log_request(request):
     else:
         return False
 
-def email_notice(request, ap_object):
+async def email_notice(request, ap_object):
     if 'type' in ap_object:
         fediverse = fediverse_factory(request)
         subj_parts = ['Fediverse', ap_object['type']]
@@ -118,7 +126,8 @@ def email_notice(request, ap_object):
             if 'author_info' not in ap_object:
                 ap_object['author_info'] = {}
                 try:
-                    ap_object['author_info'] = fediverse.get(attributedTo)
+                    async with aiohttp.ClientSession() as session:
+                        ap_object['author_info'], = await fediverse.gather_http_responses(fediverse.get(attributedTo, session))
                 except:
                     pass
                 
@@ -307,6 +316,7 @@ class Replies(View):
         #return f"{proto}://{request.site.domain}{reversepath('replies', rpath)}{request_query_string}"
         return f"{proto}://{request.site.domain}/{rpath}/{request_query_string}"
     
+    @sync_to_async
     def render_page(self, request, rpath, data_update={}):
         data = {
             'parent_uri': self.parent_uri(request, rpath),
@@ -320,7 +330,7 @@ class Replies(View):
             data
         )
     
-    def get(self, request, rpath):
+    async def get(self, request, rpath):
         rpath = rpath.strip('/')
         proto = request_protocol(request)
         request_query_string = request.META.get('QUERY_STRING', '')
@@ -331,7 +341,10 @@ class Replies(View):
         fediverse = fediverse_factory(request)
         
         if is_json_request(request):
-            items = fediverse.get_replies(rpath, content=content)
+            async with aiohttp.ClientSession() as session:
+                fediverse.http_session(session)
+                items = await fediverse.get_replies(rpath, content=content)
+            
             return ActivityResponse({
                 '@context': "https://www.w3.org/ns/activitystreams",
                 'id': self.parent_uri(request, rpath),
@@ -340,11 +353,13 @@ class Replies(View):
                 'items': items
             })
         else:
-            data = {
-                'items': fediverse.get_replies(rpath, content=True),
-                'form': ReplyForm(),
-                'summary': ''
-            }
+            async with aiohttp.ClientSession() as session:
+                fediverse.http_session(session)
+                data = {
+                    'items': await fediverse.get_replies(rpath, content=True),
+                    'form': ReplyForm(),
+                    'summary': ''
+                }
             
             context_root_url = reversepath('dumb', 'context').rstrip('/')
             context = None
@@ -375,9 +390,9 @@ class Replies(View):
                 'title': f'Comments for {data["summary"]}'
             })
             
-            return self.render_page(request, rpath, data)
+            return await self.render_page(request, rpath, data)
     
-    def post(self, request, rpath):
+    async def post(self, request, rpath):
         rpath = rpath.strip('/')
         ## If federated reply
         if 'account' in request.POST:
@@ -392,7 +407,10 @@ class Replies(View):
                 link_template = None
                 
                 username, host = form.cleaned_data['account'].split('@')
-                webfinger = fediverse.get(f'https://{host}/.well-known/webfinger?resource=acct:{form.cleaned_data["account"]}')
+                
+                async with aiohttp.ClientSession() as session:
+                    webfinger, = await fediverse.gather_http_responses(fediverse.get(f'https://{host}/.well-known/webfinger?resource=acct:{form.cleaned_data["account"]}', session=session))
+                
                 if type(webfinger) is dict and 'links' in webfinger and type(webfinger['links']) is list:
                     for link in webfinger['links']:
                         if type(link) is dict and 'template' in link and link['template']:
@@ -414,14 +432,16 @@ class Replies(View):
                 else:
                     return redirect(link_template.format(uri=form.cleaned_data['uri']))
             else:
-                items = fediverse_factory(request).get_replies(rpath, content=True)
-                return self.render_page(request, rpath, {'items': items, 'form': form})
+                async with aiohttp.ClientSession() as session:
+                    fediverse.http_session(session)
+                    items = await fediverse_factory(request).get_replies(rpath, content=True)
+                return await self.render_page(request, rpath, {'items': items, 'form': form})
     
         else:
             raise BadRequest('Unknown form was submitted.')
     
-    def delete(self, request, rpath):
-        if not request.user.is_staff:
+    async def delete(self, request, rpath):
+        if not await request_user_is_staff(request):
             raise PermissionDenied
         
         fediverse = fediverse_factory(request)
@@ -440,7 +460,7 @@ class Replies(View):
 
 @method_decorator(csrf_exempt, name='dispatch')
 class Inbox(View):
-    def post(self, request):
+    async def post(self, request):
         result = None
         should_log_request = True
         
@@ -454,9 +474,10 @@ class Inbox(View):
                     if k.startswith('HTTP_'):
                         data['object']['requestMeta'][k] = request.META[k]
                 
-                result = fediverse_factory(request).process_object(data['object'])
+                result = await fediverse_factory(request).process_object(data['object'])
                 data['object']['process_result'] = result
-                email_notice(request, data['object'])
+                
+                await email_notice(request, data['object'])
                 should_log_request = False
         
         if should_log_request:
@@ -466,22 +487,24 @@ class Inbox(View):
 
 class Following(View):
     
-    def get(self, request):
+    async def get(self, request):
         if is_json_request(request):
             return dumb(request)
-        elif not request.user.is_staff:
+        elif not await request_user_is_staff(request):
             raise PermissionDenied
         
         fediverse = fediverse_factory(request)
+        async with aiohttp.ClientSession() as session:
+            fediverse.http_session(session)
+            data = {'following': fediverse.get_following()}
         
-        data = {'following': fediverse.get_following()}
         for item in data['following']:
             item['fediverseInstance'] = urlparse(item['id']).hostname
         
         return render(request, 'messy/fediverse/following.html', data)
     
-    def post(self, request):
-        if not request.user.is_staff:
+    async def post(self, request):
+        if not await request_user_is_staff(request):
             raise PermissionDenied
         
         user_id = request.POST.get('id', None)
@@ -491,11 +514,12 @@ class Following(View):
         fediverse = fediverse_factory(request)
         
         result = None
-        
-        if request.POST.get('follow', None):
-            result = fediverse.follow(user_id)
-        elif request.POST.get('unfollow', None):
-            result = fediverse.unfollow(user_id)
+        async with aiohttp.ClientSession() as session:
+            fediverse.http_session(session)
+            if request.POST.get('follow', None):
+                result = await fediverse.follow(user_id)
+            elif request.POST.get('unfollow', None):
+                result = await fediverse.unfollow(user_id)
         
         return redirect(reverse('interact') + '?' + urlencode({'acct': user_id}))
 
@@ -589,8 +613,8 @@ def status(request, rpath):
     #raise Http404(f'Status {path} not found.')
 
 class Interact(View):
-    def get(self, request):
-        if not request.user.is_staff:
+    async def get(self, request):
+        if not await request_user_is_staff(request):
             raise PermissionDenied
 
         url = request.GET.get('acct', None)
@@ -600,7 +624,9 @@ class Interact(View):
         fediverse = fediverse_factory(request)
         data = {}
         if url:
-            data = fediverse.get(url)
+            async with aiohttp.ClientSession() as session:
+                #fediverse.http_session(session)
+                data, = await fediverse.gather_http_responses(fediverse.get(url, session=session))
             if type(data) is not dict:
                 raise BadRequest(f'Got unexpected data from {url}')
         
@@ -620,33 +646,38 @@ class Interact(View):
         
         return render(request, 'messy/fediverse/interact.html', data)
     
-    def post(self, request):
+    async def post(self, request):
         form = InteractForm(request.POST)
         data = {}
         result = None
         form_is_valid = form.is_valid()
+        fediverse = fediverse_factory(request)
         
         if 'link' in form.cleaned_data and form.cleaned_data['link']:
-            data = cache.get(form.cleaned_data['link'], sentinel)
+            async with aiohttp.ClientSession() as session:
+                data, = await fediverse.gather_http_responses(fediverse.get(form.cleaned_data['link'], session=session))
+            #data = cache.get(form.cleaned_data['link'], sentinel)
             if data is sentinel:
                 raise BadRequest(f'Object "{form.cleaned_data["link"]}" has been lost, try again.')
         
         if form_is_valid:
             ## do processing
             fediverse = fediverse_factory(request)
-            if data:
-                result = fediverse.reply(
-                    data,
-                    form.cleaned_data['content'],
-                    form.cleaned_data['subject'],
-                    form.cleaned_data['custom_url']
-                )
-            else:
-                result = fediverse.new_status(
-                    form.cleaned_data['content'],
-                    form.cleaned_data['subject'],
-                    form.cleaned_data['custom_url']
-                )
+            async with aiohttp.ClientSession() as session:
+                fediverse.http_session(session)
+                if data:
+                    result = await fediverse.reply(
+                        data,
+                        form.cleaned_data['content'],
+                        form.cleaned_data['subject'],
+                        form.cleaned_data['custom_url']
+                    )
+                else:
+                    result = await fediverse.new_status(
+                        form.cleaned_data['content'],
+                        form.cleaned_data['subject'],
+                        form.cleaned_data['custom_url']
+                    )
             
             if result:
                 ## FIXME This became a little bit messy

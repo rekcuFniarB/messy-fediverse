@@ -353,7 +353,7 @@ class Fediverse:
                         'type': 'Hashtag'
                     })
                 
-                content = content.replace(link, f'<a href="{link}" class="mention hashtag" rel="tag">#<span>{name}</span></a></p>')
+                content = content.replace(link, f'<a href="{link}" class="mention hashtag" rel="tag">#<span>{name}</span></a>')
         
         tasks = []
         for userid in userids:

@@ -356,16 +356,18 @@ class Fediverse:
                 content = content.replace(link, f'<a href="{link}" class="mention hashtag" rel="tag">#<span>{name}</span></a>')
         
         tasks = []
+        _userids = []
         for userid in userids:
             username, server = userid.split('@')
             if username and server:
+                _userids.append(userid)
                 tasks.append(self.get(f'https://{server}/.well-known/webfinger?resource=acct:{userid}'))
+        userids = _userids
         
         tasks = await self.gather_http_responses(*tasks)
         
-        for response in tasks:
-            idx = tasks.index(response)
-            userid = userids[idx]
+        for n, response in enumerate(tasks):
+            userid = userids[n]
             username, server = userid.split('@')
             if type(response) is dict and 'aliases' in response and type(response['aliases']) is list and len(response['aliases']) > 0:
                 result['tag'].append({

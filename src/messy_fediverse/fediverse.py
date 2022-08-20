@@ -180,6 +180,7 @@ class Fediverse:
         '''
         #loop = asyncio.get_running_loop()
         
+        #tasks = await asyncio.gather(*tasks, return_exceptions=not self.__DEBUG__)
         tasks = await asyncio.gather(*tasks, return_exceptions=True)
         results = []
         
@@ -188,8 +189,6 @@ class Fediverse:
             if isinstance(response, BaseException):
                 ## For gather
                 result = self.mkcoroutine(response)
-            #elif self.is_coroutine(response):
-                #self.syslog('WTF COROUTINE', str(response), str(await response))
             elif not response.ok:
                 #response_text = await response.text()
                 try:
@@ -295,7 +294,7 @@ class Fediverse:
             kwargs['headers']['Signature'] = self.sign(url, kwargs['headers'])
         
         ## Returns coroutine
-        result_coro = getattr(session, method)(url, timeout=5.0, *args, **kwargs)
+        result_coro = getattr(session, method)(url, timeout=10.0, *args, **kwargs)
         
         ## FIXME need workaround for cache support
         #if method == 'get':
@@ -325,14 +324,14 @@ class Fediverse:
         }
         
         for word in words:
-            word = word.strip('@#')
-            if '@' in word:
+            word = word.strip('@# \n\t')
+            if word.startswith('https://') or word.startswith('http://'):
+                if word not in links:
+                    links.append(word)
+            elif '@' in word:
                 ## Probably user@host
                 if word not in userids:
                     userids.append(word)
-            elif word.startswith('https://') or word.startswith('http://'):
-                if word not in links:
-                    links.append(word)
         
         for link in links:
             url = urlparse(link)
@@ -369,6 +368,7 @@ class Fediverse:
         for n, response in enumerate(tasks):
             userid = userids[n]
             username, server = userid.split('@')
+            
             if type(response) is dict and 'aliases' in response and type(response['aliases']) is list and len(response['aliases']) > 0:
                 result['tag'].append({
                     'href': response['aliases'][0],
@@ -509,7 +509,20 @@ class Fediverse:
         message: string
         Returns string or dict if response was JSON.
         '''
-        remote_author, = await self.gather_http_responses(self.get(source['attributedTo']))
+        attributedTo = ''
+        
+        if type(source['attributedTo']) is list:
+            for attr in source['attributedTo']:
+                if type(attr) is dict and 'type' in attr and attr['type'] == 'Person':
+                    attributedTo = attr['id']
+                    break
+        else:
+            attributedTo = source['attributedTo']
+        
+        if not attributedTo:
+            raise AttributeError('Source has no "attributedTo" value.')
+        
+        remote_author, = await self.gather_http_responses(self.get(attributedTo))
         remote_author_url = urlparse(remote_author['id'])
         
         uniqid = self.uniqid()

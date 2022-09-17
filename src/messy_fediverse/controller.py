@@ -304,16 +304,16 @@ def root_json(request):
     return ActivityResponse(fediverse_factory(request).user)
 
 @csrf_exempt
-def outbox(request):
-    return dumb(request)
+async def outbox(request):
+    return await dumb(request)
 
 @csrf_exempt
-def auth(request):
-    return dumb(request)
+async def auth(request):
+    return await dumb(request)
 
 @csrf_exempt
-def auth_token(request):
-    return dumb(request)
+async def auth_token(request):
+    return await dumb(request)
 
 @csrf_exempt
 async def dumb(request, *args, **kwargs):
@@ -540,7 +540,7 @@ class Following(View):
     
     async def get(self, request):
         if is_json_request(request):
-            return dumb(request)
+            return await dumb(request)
         elif not await request_user_is_staff(request):
             raise PermissionDenied
         

@@ -303,19 +303,19 @@ def root_json(request):
     log_request(request)
     return ActivityResponse(fediverse_factory(request).user)
 
-@csrf_exempt
+#@csrf_exempt
 async def outbox(request):
     return await dumb(request)
 
-@csrf_exempt
+#@csrf_exempt
 async def auth(request):
     return await dumb(request)
 
-@csrf_exempt
+#@csrf_exempt
 async def auth_token(request):
     return await dumb(request)
 
-@csrf_exempt
+#@csrf_exempt
 async def dumb(request, *args, **kwargs):
     proto = request_protocol(request)
     request_query_string = request.META.get('QUERY_STRING', '')
@@ -330,6 +330,14 @@ async def dumb(request, *args, **kwargs):
         'orderedItems': [],
         'success': await log_request(request)
     })
+
+## Temporary workaround due to error
+## "View didn't return an HttpResponse object. It returned an unawaited coroutine instead. You may need to add an 'await' into your view."
+## Waiting for fix in Django https://code.djangoproject.com/ticket/31949
+dumb.csrf_exempt = True
+auth_token.csrf_exempt = True
+auth.csrf_exempt = True
+outbox.csrf_exempt = True
 
 @csrf_exempt
 def featured(request, *args, **kwargs):

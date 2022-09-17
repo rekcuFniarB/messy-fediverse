@@ -659,9 +659,10 @@ class Interact(View):
         if url:
             async with aiohttp.ClientSession() as session:
                 #fediverse.http_session(session)
-                data, = await fediverse.gather_http_responses(fediverse.get(url, session=session))
+                fresponse = fediverse.get(url, session=session)
+                data, = await fediverse.gather_http_responses(fresponse)
             if type(data) is not dict:
-                raise BadRequest(f'Got unexpected data from {url}')
+                raise BadRequest(f'Got unexpected data from {url}: {data}')
         
         if 'url' not in data and 'id' in data:
             data['url'] = data['id']

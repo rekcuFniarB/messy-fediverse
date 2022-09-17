@@ -370,11 +370,13 @@ class Fediverse:
             username, server = userid.split('@')
             
             if type(response) is dict and 'aliases' in response and type(response['aliases']) is list and len(response['aliases']) > 0:
-                result['tag'].append({
-                    'href': response['aliases'][0],
-                    'name': f'@{userid}',
-                    'type': 'Mention'
-                })
+                if (len([x for x in result['tag'] if type(x) is dict and x.get('href', None) == response['aliases'][0]]) == 0):
+                    result['tag'].append({
+                        'href': response['aliases'][0],
+                        'name': f'@{userid}',
+                        'type': 'Mention'
+                    })
+                
                 content = content.replace(userid, f'<span class="h-card"><a class="u-url mention" href="{response["aliases"][0]}" rel="ugc">@<span>{username}</span></a></span>')
         
         result['content'] = content
@@ -413,6 +415,9 @@ class Fediverse:
         results = await self.gather_http_responses(*results)
         for n, result in enumerate(results):
             activity['object']['mentionResults'].append((endpoints[n], result))
+        
+        ## For debug
+        activity['object']['mentionEndpoints'] = endpoints
         
         return results
     
@@ -556,19 +561,22 @@ class Fediverse:
                 "https://www.w3.org/ns/activitystreams#Public"
             ],
             "cc": [],
-            "tag": [
-                {
-                    "href": remote_author.get('url', remote_author.get('id', None)),
-                    "name": f"@{remote_author['preferredUsername']}@{remote_author_url.hostname}",
-                    "type": "Mention"
-                }
-            ],
+            "tag": [],
             "attachment": []
         }
         
         parse_result = await self.parse_tags(data['content'])
         data['content'] = parse_result['content']
         data['tag'].extend(parse_result['tag'])
+        originMention = {
+            "href": remote_author.get('url', remote_author.get('id', None)),
+            "name": f"@{remote_author['preferredUsername']}@{remote_author_url.hostname}",
+            "type": "Mention"
+        }
+        ## Appending parent author to mentions
+        if (len([x for x in data['tag'] if x.get('href', None) == originMention['href']]) == 0):
+            data['tag'].append(originMention)
+        
         data['attachment'].extend(parse_result['attachment'])
         
         save_path = f'{data["id"]}.json'

@@ -13,6 +13,7 @@ import re
 import syslog
 import sys
 from functools import partial
+from . import html
 
 class Fediverse:
     def __init__(self, user, privkey, pubkey, headers=None, datadir='/tmp', cache=None, debug=False):
@@ -314,45 +315,58 @@ class Fediverse:
             'attachment': []
         }
         
-        img_types = {
-            'png': 'image/png',
-            'jpg': 'image/jpeg',
+        file_types = {
+            'png':  'image/png',
+            'jpg':  'image/jpeg',
             'jpeg': 'image/jpeg',
-            'svg': 'image/svg',
-            'gif': 'image/gif',
-            'webp': 'image/webp'
+            'svg':  'image/svg',
+            'gif':  'image/gif',
+            'webp': 'image/webp',
+            'webm': 'video/webm',
+            'mp4':  'video/mp4',
+            'm4a':  'audio/m4a',
+            'mp3':  'audio/mpeg',
+            'ogg':  'audio/ogg',
+            'opus': 'audio/ogg',
+            'mkv':  'video/mkv',
+            'html': 'text/html',
+            'txt':  'text/plain'
         }
         
         for word in words:
             word = word.strip('@# \n\t')
             if word.startswith('https://') or word.startswith('http://'):
                 if word not in links:
-                    links.append(word)
+                    #links.append(word)
+                    pass
             elif '@' in word:
                 ## Probably user@host
                 if word not in userids:
                     userids.append(word)
         
+        links = html.TagA.findall(content)
+        
         for link in links:
-            url = urlparse(link)
-            name = path.basename(url.path.strip('/'))
-            if name:
-                link_ext = name.split('.')[-1].lower()
+            url = urlparse(link.attr_href)
+            basename = path.basename(url.path.strip('/'))
+            if basename:
+                link_ext = basename.split('.')[-1].lower()
                 
-                if link_ext in img_types:
+                if 'attachment' in link.attr_rel:
                     result['attachment'].append({
                         'type': 'Document',
-                        'mediaType': img_types[link_ext],
-                        'url': link
+                        'mediaType': file_types.get(link_ext, 'application/octet-stream'),
+                        'url': link.attr_href
                     })
-                else:
+                elif 'tag' in link.attr_rel:
+                    hashtag = link.name
+                    if not hashtag.startswith('#'):
+                        hashtag = f'#{hashtag}'
                     result['tag'].append({
-                        'href': link,
-                        'name': f'#{name}',
+                        'href': link.attr_href,
+                        'name': hashtag,
                         'type': 'Hashtag'
                     })
-                
-                content = content.replace(link, f'<a href="{link}" class="mention hashtag" rel="tag">#<span>{name}</span></a>')
         
         tasks = []
         _userids = []

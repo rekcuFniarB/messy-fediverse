@@ -11,6 +11,7 @@ from django.templatetags.static import static as _staticurl
 from django.utils.html import strip_tags
 from .forms import InteractForm, InteractSearchForm, ReplyForm
 from .fediverse import Fediverse
+from . import html
 import requests
 import json
 from os import path
@@ -675,7 +676,8 @@ class Interact(View):
     async def get(self, request):
         if not await request_user_is_staff(request):
             raise PermissionDenied
-
+        
+        form_textarea_content = []
         url = request.GET.get('acct', None)
         #if not url:
         #    raise BadRequest('What to interact with?')
@@ -699,9 +701,44 @@ class Interact(View):
         ## If is an user profile
         if 'publicKey' in data:
             data['weFollow'] = fediverse.doWeFollow(data['id'])
+        else:
+            user_ids = []
+            for attr in ['to', 'cc']:
+                if attr in data and type(data[attr]) is list:
+                    for link in data[attr]:
+                        if link not in user_ids:
+                            user_ids.append(link)
+            
+            if 'attributedTo' in data and data['attributedTo'] not in user_ids:
+                user_ids.append(data['attributedTo'])
+            
+            ## Getting users info
+            tasks = []
+            async with aiohttp.ClientSession() as session:
+                for user_id in user_ids:
+                    tasks.append(fediverse.get(user_id, session=session))
+                tasks = await fediverse.gather_http_responses(*tasks)
+            
+            for user_obj in tasks:
+                ## If is user object
+                if type(user_obj) is dict and 'preferredUsername' in user_obj and 'id' in user_obj:
+                    user_host = urlparse(user_obj['id']).hostname
+                    if user_host:
+                        user_at_host = f'{user_obj["preferredUsername"]}@{user_host}'
+                        form_textarea_content.append(user_at_host)
+        
+        if 'tag' in data and type(data['tag']) is list:
+            for tag in data['tag']:
+                if type(tag) is dict:
+                    if tag.get('type', None) == 'Hashtag':
+                        link_href = tag.get('href', None)
+                        link_name = tag.get('name', None)
+                        if link_href and link_name:
+                            link = html.TagA(attr_href=link_href, name=link_name, attr_rel='tag noopener', attr_class=['mention', 'hashtag'], attr_target='_blank')
+                            form_textarea_content.append(str(link))
         
         data['rawJson'] = json.dumps(data, indent=4)
-        data['form'] = InteractForm(initial={'link': url})
+        data['form'] = InteractForm(initial={'link': url, 'content': ' '.join(form_textarea_content)})
         data['search_form'] = InteractSearchForm(initial={'acct': url})
         
         return render(request, 'messy/fediverse/interact.html', data)

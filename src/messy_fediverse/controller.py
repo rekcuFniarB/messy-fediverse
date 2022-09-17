@@ -96,10 +96,12 @@ def request_protocol(request):
         proto = 'https'
     return proto
 
-def log_request(request, data=None):
+async def log_request(request, data=None):
     if settings.MESSY_FEDIVERSE.get('LOG_REQUESTS_TO_MAIL', False) and request.method == 'POST':
         subject=f'SOCIAL {request.method} REQUEST: {request.path}'
         body = None
+        fediverse = fediverse_factory(request)
+        content = ''
         
         if data:
             user_host = ''
@@ -109,17 +111,33 @@ def log_request(request, data=None):
             subject = f'Fediverse {data["type"]} {user_host}'
             body = json.dumps(data, indent=4)
             body = f'<code><pre>{body}</pre></code>'
+            
+            apobject = data.get('object', None)
+            
+            if (
+                type(apobject) is str and
+                (
+                    apobject.startswith('http://') or
+                    apobject.startswith('https://')
+                )
+            ):
+                ## Trying to get object content
+                async with aiohttp.ClientSession() as session:
+                    apobject, = await fediverse.gather_http_responses(fediverse.get(apobject, session))
+            
+            if type(apobject) is dict:
+                content = apobject.get('content', '')
         
         if not body:
             body = request.body.decode('utf-8', 'replace')
         
-        message = f'''
+        message = f'''{content}<br><br>
             GET: {request.META['QUERY_STRING']}
-            
+            <br>
             POST: {request.POST.__str__()}
-            
+            <br>
             BODY:{body}
-            
+            <br>
             META: {request.META.__str__()}
         '''
         
@@ -298,7 +316,7 @@ def auth_token(request):
     return dumb(request)
 
 @csrf_exempt
-def dumb(request, *args, **kwargs):
+async def dumb(request, *args, **kwargs):
     proto = request_protocol(request)
     request_query_string = request.META.get('QUERY_STRING', '')
     if request_query_string:
@@ -310,7 +328,7 @@ def dumb(request, *args, **kwargs):
         'type': 'OrderedCollection',
         'totalItems': 0,
         'orderedItems': [],
-        'success': log_request(request)
+        'success': await log_request(request)
     })
 
 @csrf_exempt
@@ -514,7 +532,7 @@ class Inbox(View):
             })
         
         if should_log_request:
-            log_request(request, data)
+            await log_request(request, data)
         
         return JsonResponse({'success': bool(result)})
 

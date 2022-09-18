@@ -45,6 +45,26 @@
             {% autoescape off %}
             {{ item.content }}
             {% endautoescape %}
+            
+            {% for attachment in item.attachment %}
+                {% if attachment.mediaType|slice:':6' == 'audio/' %}
+                    <p class="flex-center">
+                        <a href="{{ attachment.url }}" class="media-embed" data-embed-frame-src="https://cloudflare-ipfs.com/ipfs/QmPxmcanpnyiH9V7J7jMjb1Ux9mhgkyuPPjtLLM236K6Bu/?audio={{ attachment.url }}" data-embed-height="62px" style="padding-bottom: 0; height: 62px; background-color: #888;">{{ attachment.name }}</a>
+                    </p>
+                {% elif attachment.mediaType|slice:':6' == 'video/' %}
+                    <p class="flex-center">
+                        <a href="{{ attachment.url }}" class="media-embed" data-embed-frame-src="https://cloudflare-ipfs.com/ipfs/QmPxmcanpnyiH9V7J7jMjb1Ux9mhgkyuPPjtLLM236K6Bu/?video={{ attachment.url }}" data-embed-height="270px" style="padding-bottom: 0; height: 270px; background-color: #888;">{{ attachment.name }}</a>
+                    </p>
+                {% endif %}
+            {% endfor %}
+            
+            <p class="flex-center flex-wrap">
+            {% for attachment in item.attachment %}
+                {% if attachment.mediaType|slice:':6' == 'image/' %}
+                <img class="thumbnail thumb-mini media-embed-popup" src="{{ attachment.url }}" title="{{ attachment.name }}">
+                {% endif %}
+            {% endfor %}
+            </p>
         </div>
         
         <footer>

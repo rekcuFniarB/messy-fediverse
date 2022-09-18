@@ -169,6 +169,7 @@
                             newContent.innerHTML = response;
                             newContent = newContent.querySelector('#messy-fediverse-block-main,main,body') || newContent;
                             ajaxTarget.innerHTML = newContent.innerHTML;
+                            window.dispatchEvent(new Event('load'));
                         });
                     }
                 }

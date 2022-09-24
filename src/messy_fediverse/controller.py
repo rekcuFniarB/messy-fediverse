@@ -77,9 +77,9 @@ def staticurl(request, path):
     return path
 
 def is_json_request(request):
-    '''Check if client wants json'''
-    accept = request.META.get('HTTP_ACCEPT', '')
-    return 'application/json' in accept or 'application/activity+json' in accept
+    '''Check if client wants JSON'''
+    accept = request.META.get('HTTP_ACCEPT', '').lower()
+    return 'application/json' in accept or 'application/activity+json' in accept or 'application/ld+json' in accept
 
 def is_post_json(request):
     '''Check if request posts json'''

@@ -24,8 +24,16 @@ import aiohttp
 #from pprint import pprint
 
 class ActivityResponse(JsonResponse):
-    def __init__(self, data):
-        super().__init__(data, content_type='application/activity+json')
+    def __init__(self, data, request=None):
+        content_type = 'application/activity+json'
+        
+        if request:
+            ## Return content type they want
+            accept = request.META.get('HTTP_ACCEPT', '').lower().split(',')[0].split(';')[0]
+            if accept.startswith('application/') and 'json' in accept:
+                content_type = accept
+        
+        super().__init__(data, content_type=content_type)
 
 
 sentinel = object()
@@ -302,7 +310,7 @@ def main(request):
 
 def root_json(request):
     log_request(request)
-    return ActivityResponse(fediverse_factory(request).user)
+    return ActivityResponse(fediverse_factory(request).user, request)
 
 #@csrf_exempt
 async def outbox(request):
@@ -330,7 +338,7 @@ async def dumb(request, *args, **kwargs):
         'totalItems': 0,
         'orderedItems': [],
         'success': await log_request(request)
-    })
+    }, request)
 
 ## Temporary workaround due to error
 ## "View didn't return an HttpResponse object. It returned an unawaited coroutine instead. You may need to add an 'await' into your view."
@@ -350,7 +358,7 @@ def featured(request, *args, **kwargs):
         "type": "OrderedCollection",
         "totalItems": 0,
         "orderedItems": []
-    })
+    }, request)
 
 class Replies(View):
     def parent_uri(self, request, rpath):
@@ -396,7 +404,7 @@ class Replies(View):
                 'type': 'CollectionPage',
                 'partOf': f"{proto}://{request.site.domain}{reversepath('replies', rpath)}",
                 'items': items
-            })
+            }, request)
         else:
             async with aiohttp.ClientSession() as session:
                 fediverse.http_session(session)
@@ -654,7 +662,7 @@ def status(request, rpath):
         if 'replies' not in data:
             data['replies'] = f'{proto}://{request.site.domain}{reversepath("replies", request.path)}'
         
-        return ActivityResponse(data)
+        return ActivityResponse(data, request)
     
     if request.user.is_staff:
         data['raw_json'] = json.dumps(data, indent=4)

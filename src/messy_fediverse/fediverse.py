@@ -496,7 +496,7 @@ class Fediverse:
             'conversation': context,
             'content': message,
             'source': message,
-            'senstive': None,
+            'sensitive': False,
             'summary': subject,
             'to': [
                 'https://www.w3.org/ns/activitystreams#Public',
@@ -568,7 +568,7 @@ class Fediverse:
             'conversation': context,
             "content": message,
             "source": message,
-            "senstive": None,
+            "sensitive": False,
             "summary": subject,
             "to": [
                 source.get('attributedTo', None),

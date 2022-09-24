@@ -17,6 +17,25 @@ def stderrlog(*msg):
     if settings.DEBUG:
         print(*msg, file=sys.stderr, flush=True)
 
+class StdErrLogAllRequests:
+    '''
+    Log all requests to stderr
+    '''
+    def __init__(self, get_response):
+        self.get_response = get_response
+    
+    def __call__(self, request):
+        ## before view
+        response = self.get_response(request)
+        ## after view
+        stderrlog(request.method, request.path, request.GET.__str__())
+        if request.method == 'POST':
+            stderrlog('POST DATA:', request.POST.__str__())
+        stderrlog('REQUEST META:', request.META.__str__())
+        stderrlog('RESPONSE:', response.__str__())
+        stderrlog('RESPONSE BODY:', response.content.decode(response.charset, errors='replace')[:256].replace('\n', ''), '...')
+        return response
+
 class SysLog:
     '''
     Requests logger

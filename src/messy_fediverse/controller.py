@@ -716,7 +716,15 @@ class Interact(View):
             tasks = []
             async with aiohttp.ClientSession() as session:
                 for user_id in user_ids:
-                    tasks.append(fediverse.get(user_id, session=session))
+                    if type(user_id) is str:
+                        tasks.append(fediverse.get(user_id, session=session))
+                    elif type(user_id) is list:
+                        ## Peertube?
+                        for item in user_id:
+                            if type(item) is str:
+                                tasks.append(fediverse.get(item, session=session))
+                            elif type(item) is dict and 'id' in item:
+                                tasks.append(fediverse.get(item['id'], session=session))
                 tasks = await fediverse.gather_http_responses(*tasks)
             
             for user_obj in tasks:

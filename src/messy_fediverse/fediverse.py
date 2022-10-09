@@ -160,6 +160,7 @@ class Fediverse:
         return self.request(url, session, method='post', *args, **kwargs)
     
     def is_coroutine(self, something):
+        ## FIXME it's very stupid way
         return str(something).startswith('<coroutine object ')
     
     def mkcoroutine(self, result=None):

@@ -541,7 +541,11 @@ class Fediverse:
         if not attributedTo:
             raise AttributeError('Source has no "attributedTo" value.')
         
-        remote_author, = await self.gather_http_responses(self.get(attributedTo))
+        if 'attributedToPerson' in source and type(source['attributedToPerson']) is dict:
+            remote_author = source['attributedToPerson']
+        else:
+            remote_author, = await self.gather_http_responses(self.get(attributedTo))
+        
         remote_author_url = urlparse(remote_author['id'])
         
         uniqid = self.uniqid()
@@ -575,6 +579,7 @@ class Fediverse:
                 "https://www.w3.org/ns/activitystreams#Public"
             ],
             "cc": [],
+            "directMessage": source.get('directMessage', False),
             "tag": [],
             "attachment": []
         }

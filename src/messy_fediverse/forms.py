@@ -5,6 +5,8 @@ class InteractForm(forms.Form):
     content = forms.CharField(widget=forms.Textarea, max_length=65535, required=True)
     link = forms.CharField(widget=forms.HiddenInput, required=False)
     custom_url = forms.CharField(max_length=255, required=False)
+    reply_direct = forms.CharField(widget=forms.HiddenInput, required=False)
+    context = forms.CharField(widget=forms.HiddenInput, required=False)
 
 class InteractSearchForm(forms.Form):
     acct = forms.CharField(max_length=255, required=False, label='Search')

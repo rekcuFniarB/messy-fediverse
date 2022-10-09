@@ -754,7 +754,18 @@ class Interact(View):
                             form_textarea_content.append(str(link))
         
         data['rawJson'] = json.dumps(data, indent=4)
-        data['form'] = InteractForm(initial={'link': url, 'content': ' '.join(form_textarea_content)})
+        data['replyDirect'] = request.GET.get('reply_direct', None)
+        
+        get_context = request.GET.get('context', '')
+        if get_context:
+            data['context'] = get_context
+        
+        data['form'] = InteractForm(initial={
+            'link': url,
+            'content': ' '.join(form_textarea_content),
+            'reply_direct': data['replyDirect'],
+            'context': data.get('context', '')
+        })
         data['search_form'] = InteractSearchForm(initial={'acct': url})
         
         return render(request, 'messy/fediverse/interact.html', data)
@@ -779,6 +790,21 @@ class Interact(View):
             async with aiohttp.ClientSession() as session:
                 fediverse.http_session(session)
                 if data:
+                    if 'type' in data and data['type'] == 'Person':
+                        #and form.cleaned_data['reply_direct']:
+                        ## It'a a direct message
+                        person_to_reply = data
+                        ## Preparing source
+                        data = {
+                            'attributedTo': person_to_reply['id'],
+                            'attributedToPerson': person_to_reply
+                        }
+                    if form.cleaned_data['reply_direct']:
+                        data['id'] = form.cleaned_data['reply_direct']
+                        data['directMessage'] = True
+                    if form.cleaned_data['context']:
+                        data['context'] = form.cleaned_data['context']
+                    
                     result = await fediverse.reply(
                         data,
                         form.cleaned_data['content'],

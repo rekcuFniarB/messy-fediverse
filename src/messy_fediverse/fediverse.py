@@ -383,16 +383,26 @@ class Fediverse:
         for n, response in enumerate(tasks):
             userid = userids[n]
             username, server = userid.split('@')
+            userUrl = None
+            if type(response) is dict:
+                if 'links' in response and type(response['links']) is list:
+                    for link in response['links']:
+                        linkType = link.get('type', None)
+                        if type(link) is dict and link.get('rel', None) == 'self' and linkType:
+                            if 'application/activity' in linkType or 'json' in linkType:
+                                userUrl = link.get('href', None)
+                                break
             
-            if type(response) is dict and 'aliases' in response and type(response['aliases']) is list and len(response['aliases']) > 0:
-                if (len([x for x in result['tag'] if type(x) is dict and x.get('href', None) == response['aliases'][0]]) == 0):
+            if userUrl:
+                ## If not added to tags yet
+                if (len([x for x in result['tag'] if type(x) is dict and x.get('href', None) == userUrl]) == 0):
                     result['tag'].append({
-                        'href': response['aliases'][0],
+                        'href': userUrl,
                         'name': f'@{userid}',
                         'type': 'Mention'
                     })
                 
-                content = content.replace(userid, f'<span class="h-card"><a class="u-url mention" href="{response["aliases"][0]}" rel="ugc">@<span>{username}</span></a></span>')
+                content = content.replace(userid, f'<span class="h-card"><a class="u-url mention" href="{userUrl}" rel="ugc">@<span>{username}</span></a></span>')
         
         result['content'] = content
         return result
@@ -554,9 +564,10 @@ class Fediverse:
         datepath = now.date().isoformat().replace('-', '/')
         status_id = url or path.join(self.id, 'status', datepath, uniqid, '')
         ## Use context of source if exists
-        context = path.join(self.id, 'context', urlparse(status_id).path.strip('/'), '')
+        #context = path.join(self.id, 'context', urlparse(status_id).path.strip('/'), '')
+        context = source['id']
         context = source.get('context', source.get('conversation', context))
-        
+        ## Not all engines use context though, for example Misskey not.
         
         data = {
             "id": status_id,
@@ -593,12 +604,11 @@ class Fediverse:
             "name": f"@{remote_author['preferredUsername']}@{remote_author_url.hostname}",
             "type": "Mention"
         }
-        ## Appending parent author to mentions
-        if (len([x for x in data['tag'] if x.get('href', None) == originMention['href']]) == 0):
+        ## Appending parent author to mentions if it isn't there yet
+        if (len([x for x in data['tag'] if x.get('href', None) == originMention['href'] or x.get('name', None) == originMention['name']]) == 0):
             data['tag'].append(originMention)
         
         data['attachment'].extend(parse_result['attachment'])
-        
         save_path = f'{data["id"]}.json'
         
         reply_save_path = None

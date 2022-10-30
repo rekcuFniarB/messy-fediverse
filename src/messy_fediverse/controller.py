@@ -168,20 +168,21 @@ async def email_notice(request, ap_object):
             subj_parts.append(summary)
         attributedTo = ap_object.get('attributedTo', None)
         if attributedTo:
-            if 'author_info' not in ap_object:
-                ap_object['author_info'] = {}
+            if 'authorInfo' not in ap_object:
+                ap_object['authorInfo'] = {}
                 try:
                     async with aiohttp.ClientSession() as session:
-                        ap_object['author_info'], = await fediverse.gather_http_responses(fediverse.get(attributedTo, session))
+                        ap_object['authorInfo'], = await fediverse.gather_http_responses(fediverse.get(attributedTo, session))
                 except:
                     pass
-                
-                ap_object['author_info']['name@host'] = ''
-                if 'preferredUsername' in ap_object['author_info']:
-                    author_url = urlparse(ap_object['author_info']['id'])
-                    ap_object['author_info']['name@host'] = f'{ap_object["author_info"]["preferredUsername"]}@{author_url.netloc}'
+            
+            if 'authorInfo' in ap_object and type(ap_object['authorInfo']) is dict:
+                ap_object['authorInfo']['name@host'] = ''
+                if 'preferredUsername' in ap_object['authorInfo']:
+                    author_url = urlparse(ap_object['authorInfo']['id'])
+                    ap_object['authorInfo']['name@host'] = f'{ap_object["authorInfo"]["preferredUsername"]}@{author_url.netloc}'
                     if not summary:
-                        subj_parts.append(ap_object['author_info']['name@host'])
+                        subj_parts.append(ap_object['authorInfo']['name@host'])
         
         content = ap_object.get('content', '')
         

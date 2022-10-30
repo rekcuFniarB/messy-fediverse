@@ -181,8 +181,8 @@ async def email_notice(request, ap_object):
                     ap_object['authorInfo']['user@host'] = ''
                     author_url = urlparse(ap_object['authorInfo']['id'])
                     ap_object['authorInfo']['user@host'] = f'{ap_object["authorInfo"]["preferredUsername"]}@{author_url.netloc}'
-                    subj_parts.append('by')
-                    subj_parts.append(ap_object['authorInfo']['user@host'])
+                subj_parts.append('by')
+                subj_parts.append(ap_object['authorInfo'].get('user@host', ''))
         
         content = ap_object.get('content', '')
         

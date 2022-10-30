@@ -177,12 +177,12 @@ async def email_notice(request, ap_object):
                     pass
             
             if 'authorInfo' in ap_object and type(ap_object['authorInfo']) is dict:
-                ap_object['authorInfo']['name@host'] = ''
-                if 'preferredUsername' in ap_object['authorInfo']:
+                if 'preferredUsername' in ap_object['authorInfo'] and not ap_object['authorInfo'].get('user@host', None):
+                    ap_object['authorInfo']['user@host'] = ''
                     author_url = urlparse(ap_object['authorInfo']['id'])
-                    ap_object['authorInfo']['name@host'] = f'{ap_object["authorInfo"]["preferredUsername"]}@{author_url.netloc}'
-                    if not summary:
-                        subj_parts.append(ap_object['authorInfo']['name@host'])
+                    ap_object['authorInfo']['user@host'] = f'{ap_object["authorInfo"]["preferredUsername"]}@{author_url.netloc}'
+                    subj_parts.append('by')
+                    subj_parts.append(ap_object['authorInfo']['user@host'])
         
         content = ap_object.get('content', '')
         

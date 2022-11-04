@@ -199,7 +199,7 @@ class Fediverse:
                 except BaseException as e:
                     e.args = (*e.args, f'URL: {response.url}')
                     result = self.mkcoroutine(e)
-            elif 'application/' in response.headers['content-type'] and 'json' in response.headers['content-type']:
+            elif 'content-type' in response.headers and 'application/' in response.headers['content-type'] and 'json' in response.headers['content-type']:
                 ## FIXME Probably try/catch will not work here
                 try:
                     result = response.json()
@@ -539,25 +539,23 @@ class Fediverse:
         message: string
         Returns string or dict if response was JSON.
         '''
-        attributedTo = ''
+        attributedTo = source.get('attributedTo', '')
         
-        if type(source['attributedTo']) is list:
-            for attr in source['attributedTo']:
+        if type(attributedTo) is list:
+            for attr in attributedTo:
                 if type(attr) is dict and 'type' in attr and attr['type'] == 'Person':
                     attributedTo = attr['id']
                     break
-        else:
-            attributedTo = source['attributedTo']
         
-        if not attributedTo:
-            raise AttributeError('Source has no "attributedTo" value.')
+        #if not attributedTo:
+        #    raise AttributeError('Source has no "attributedTo" value.')
+        
+        remote_author = None
         
         if 'attributedToPerson' in source and type(source['attributedToPerson']) is dict:
             remote_author = source['attributedToPerson']
-        else:
+        elif attributedTo:
             remote_author, = await self.gather_http_responses(self.get(attributedTo))
-        
-        remote_author_url = urlparse(remote_author['id'])
         
         uniqid = self.uniqid()
         now = datetime.now()
@@ -599,14 +597,18 @@ class Fediverse:
         parse_result = await self.parse_tags(data['content'])
         data['content'] = parse_result['content']
         data['tag'].extend(parse_result['tag'])
-        originMention = {
-            "href": remote_author.get('url', remote_author.get('id', None)),
-            "name": f"@{remote_author['preferredUsername']}@{remote_author_url.hostname}",
-            "type": "Mention"
-        }
-        ## Appending parent author to mentions if it isn't there yet
-        if (len([x for x in data['tag'] if x.get('href', None) == originMention['href'] or x.get('name', None) == originMention['name']]) == 0):
-            data['tag'].append(originMention)
+        
+        if remote_author:
+            remote_author_url = urlparse(remote_author['id'])
+            
+            originMention = {
+                "href": remote_author.get('url', remote_author.get('id', None)),
+                "name": f"@{remote_author['preferredUsername']}@{remote_author_url.hostname}",
+                "type": "Mention"
+            }
+            ## Appending parent author to mentions if it isn't there yet
+            if (len([x for x in data['tag'] if x.get('href', None) == originMention['href'] or x.get('name', None) == originMention['name']]) == 0):
+                data['tag'].append(originMention)
         
         data['attachment'].extend(parse_result['attachment'])
         save_path = f'{data["id"]}.json'

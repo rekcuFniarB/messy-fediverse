@@ -6,6 +6,9 @@
 .messy-fediverse-comments form input {
     margin-right: 10px;
 }
+.messy-fediverse-comments form input[name="account"] {
+    width: 20em;
+}
 .messy-fediverse-comments article {
     padding-top: 3rem;
     border-top: 1px solid grey;

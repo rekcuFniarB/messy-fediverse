@@ -340,7 +340,7 @@ class Fediverse:
                 if word not in links:
                     #links.append(word)
                     pass
-            elif '@' in word:
+            elif '@' in word and word.count('@') == 1:
                 ## Probably user@host
                 if word not in userids:
                     userids.append(word)

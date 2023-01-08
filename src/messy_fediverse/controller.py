@@ -443,7 +443,7 @@ async def save_activity(request, activity):
                 response, = await fediverse.gather_http_responses(
                     fediverse.post(actorInfo['inbox'], session, json=acceptActivity)
                 )
-                folloser.accepted = True
+                follower.accepted = True
                 await sync_to_async(follower.save)()
                 stderrlog('FOLLOW ACCEPT RESPONSE:', response, acceptActivity)
             ## endif 'FOL' (follow request)

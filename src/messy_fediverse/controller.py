@@ -4,6 +4,7 @@ from django.http import JsonResponse, Http404
 from django.core.exceptions import PermissionDenied, BadRequest
 from django.core.cache import cache
 from django.core.mail import mail_admins
+from django.core.files.base import ContentFile
 from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
@@ -21,6 +22,7 @@ from datetime import datetime
 import sys
 from asgiref.sync import sync_to_async
 import aiohttp
+from .models import Activity, Follower, FederatedEndpoint
 #from pprint import pprint
 
 class ActivityResponse(JsonResponse):
@@ -301,6 +303,9 @@ def fediverse_factory(request):
             datadir=settings.MESSY_FEDIVERSE.get('DATADIR', settings.MEDIA_ROOT),
             debug=settings.DEBUG
         )
+    
+    __cache__['fediverse'].federated_endpoints = FederatedEndpoint.objects.filter(disabled=False)
+    
     return __cache__['fediverse']
 
 @csrf_exempt
@@ -350,6 +355,104 @@ auth_token.csrf_exempt = True
 auth.csrf_exempt = True
 outbox.csrf_exempt = True
 
+
+async def save_activity(request, activity):
+    '''
+    Saving incoming activity.
+    request: django HttpRequest instance
+    activity: dict
+    '''
+    act = None
+    result = activity.get('process_result', None)
+    apobject = activity.get('object', {})
+    activity_id = activity.get('id', None)
+    
+    if type(apobject) is dict:
+        object_id = apobject.get('id', None)
+    else:
+        object_id = apobject
+        apobject = {}
+    
+    if not result:
+        result = apobject.get('process_result', None)
+    
+    actType = None
+    act_type = activity.get('type', apobject.get('type', ''))
+    for def_type in Activity.TYPES:
+        if act_type == def_type[1]:
+            actType = def_type[0]
+    
+    if actType and activity_id:
+        fediverse = fediverse_factory(request)
+        
+        act = await Activity.objects.filter(uri=activity_id).afirst()
+        ## FIXME maybe we should quit entire processing if activity already exists
+        if not act:
+            act = Activity(
+                uri = activity_id,
+                activity_type = actType,
+                actor_uri = activity.get('actor', None),
+                object_uri = object_id,
+                incoming = True
+            )
+            if result:
+                ## If json already stored
+                activity_file = fediverse.normalize_file_path(result)
+                if path.isfile(activity_file):
+                    act.self_json.name = path.relpath(activity_file, settings.MEDIA_ROOT)
+            else:
+                act.self_json.save('activity.json', content=ContentFile(json.dumps(activity)), save=False)
+            
+            await sync_to_async(act.save)()
+        
+        if actType == 'FOL':
+            ## If follow request
+            follower = await Follower.objects.filter(uri=act.actor_uri).afirst()
+            ## Retrieving actor info from the net
+            ## Getting existing session
+            session = await fediverse.http_session()
+            actorInfo, = await fediverse.gather_http_responses(fediverse.get(act.actor_uri, session=session))
+            ## If actor info is valid
+            if type(actorInfo) is not dict or 'endpoints' not in actorInfo or type(actorInfo['endpoints']) is not dict or 'sharedInbox' not in actorInfo['endpoints']:
+                actorInfo = None
+            
+            if not follower:
+                if actorInfo:
+                    endpoint = await FederatedEndpoint.objects.filter(uri=actorInfo['endpoints']['sharedInbox']).afirst()
+                    if not endpoint:
+                        ## Not created yet
+                        endpoint = FederatedEndpoint(uri=actorInfo['endpoints']['sharedInbox'])
+                        await sync_to_async(endpoint.save)()
+                    
+                    follower = Follower(
+                        uri=act.actor_uri,
+                        activity=act,
+                        object_uri=object_id,
+                        endpoint=endpoint,
+                        disabled=False,
+                        accepted=False
+                    )
+                    await sync_to_async(follower.save)()
+            
+            if follower and actorInfo and not follower.accepted and not fediverse.manuallyApprovesFollowers:
+                acceptActivity = fediverse.activity(
+                    type='Accept',
+                    object=apobject,
+                    to=[actorInfo['id']]
+                )
+                response, = await fediverse.gather_http_responses(
+                    fediverse.post(actorInfo['endpoints']['sharedInbox'], session, json=acceptActivity)
+                )
+            ## endif 'FOL' (follow request)
+        elif actType == 'UND':
+            if apobject.get('type', None) == 'Follow' and object_id:
+                ## if unfollow request
+                followers = Follower.objects.filter(uri=object_id)
+                followers.update(disabled=True)
+    
+    return act
+
+
 @csrf_exempt
 def featured(request, *args, **kwargs):
     proto = request_protocol(request)
@@ -397,7 +500,7 @@ class Replies(View):
         
         if is_json_request(request):
             async with aiohttp.ClientSession() as session:
-                fediverse.http_session(session)
+                await fediverse.http_session(session)
                 items = await fediverse.get_replies(rpath, content=content)
             
             return ActivityResponse({
@@ -409,7 +512,7 @@ class Replies(View):
             }, request)
         else:
             async with aiohttp.ClientSession() as session:
-                fediverse.http_session(session)
+                await fediverse.http_session(session)
                 data = {
                     'items': await fediverse.get_replies(rpath, content=True),
                     'form': ReplyForm(),
@@ -488,7 +591,7 @@ class Replies(View):
                     return redirect(link_template.format(uri=form.cleaned_data['uri']))
             else:
                 async with aiohttp.ClientSession() as session:
-                    fediverse.http_session(session)
+                    await fediverse.http_session(session)
                     items = await fediverse_factory(request).get_replies(rpath, content=True)
                 return await self.render_page(request, rpath, {'items': items, 'form': form})
     
@@ -517,30 +620,34 @@ class Replies(View):
 class Inbox(View):
     async def post(self, request):
         result = None
+        saveResult = None
         should_log_request = True
         data = None
+        responseData = {'success': False}
         
         ## If we've received a JSON
         if is_post_json(request):
             data = json.loads(request.body)
-            ## If activity with object
-            if 'object' in data and type(data['object']) is dict:
-                data['object']['requestMeta'] = {}
-                for k in request.META:
-                    if k.startswith('HTTP_'):
-                        data['object']['requestMeta'][k] = request.META[k]
-                
-                fediverse = fediverse_factory(request)
-                
-                async with aiohttp.ClientSession() as session:
-                    fediverse.http_session(session)
-                    result = await fediverse.process_object(data['object'])
+            fediverse = fediverse_factory(request)
+            async with aiohttp.ClientSession() as session:
+                await fediverse.http_session(session)
+                ## If activity with object
+                if 'object' in data and type(data['object']) is dict:
+                    data['object']['requestMeta'] = {}
+                    for k in request.META:
+                        if k.startswith('HTTP_'):
+                            data['object']['requestMeta'][k] = request.META[k]
+                    
+                    result = await fediverse.process_object(data)
                     data['object']['process_result'] = result
                     if 'actor' in data:
                         data['_actor'], = await fediverse.gather_http_responses(fediverse.get(data['actor'], session))
+                    
+                    await email_notice(request, data['object'])
+                    should_log_request = False
                 
-                await email_notice(request, data['object'])
-                should_log_request = False
+                saveResult = await save_activity(request, data)
+                
         
         if 'type' in data and data['type'] == 'Delete':
             should_log_request = False
@@ -553,7 +660,11 @@ class Inbox(View):
         if should_log_request:
             await log_request(request, data)
         
-        return JsonResponse({'success': bool(result)})
+        responseData['success'] = bool(saveResult)
+        if saveResult:
+            responseData['activity'] = saveResult.get_dict()
+        
+        return JsonResponse(responseData)
 
 class Following(View):
     
@@ -565,7 +676,7 @@ class Following(View):
         
         fediverse = fediverse_factory(request)
         async with aiohttp.ClientSession() as session:
-            fediverse.http_session(session)
+            await fediverse.http_session(session)
             data = {'following': fediverse.get_following()}
         
         for item in data['following']:
@@ -585,7 +696,7 @@ class Following(View):
         
         result = None
         async with aiohttp.ClientSession() as session:
-            fediverse.http_session(session)
+            await fediverse.http_session(session)
             if request.POST.get('follow', None):
                 result = await fediverse.follow(user_id)
             elif request.POST.get('unfollow', None):
@@ -696,7 +807,7 @@ class Interact(View):
         data = {}
         if url:
             async with aiohttp.ClientSession() as session:
-                #fediverse.http_session(session)
+                #await fediverse.http_session(session)
                 fresponse = fediverse.get(url, session=session)
                 data, = await fediverse.gather_http_responses(fresponse)
             if type(data) is not dict:
@@ -790,7 +901,7 @@ class Interact(View):
             ## do processing
             fediverse = fediverse_factory(request)
             async with aiohttp.ClientSession() as session:
-                fediverse.http_session(session)
+                await fediverse.http_session(session)
                 if data:
                     if 'type' in data and data['type'] == 'Person':
                         #and form.cleaned_data['reply_direct']:

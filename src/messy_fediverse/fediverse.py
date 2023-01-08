@@ -18,7 +18,7 @@ from . import html
 class Fediverse:
     def __init__(self, user, privkey, pubkey, headers=None, datadir='/tmp', cache=None, debug=False):
         '''
-        :cache object: optional cache object used for ceching requests
+        :cache object: optional cache object used for caching requests
         '''
         self.__cache__ = cache
         self.__sentinel__ = object()
@@ -82,7 +82,7 @@ class Fediverse:
             (self.__datadir__.endswith(f'/{filenameparts[0]}')
             or self.__datadir__.endswith(f'/{filenameparts[0]}/') )):
                 filenameparts = filenameparts[1:]
-                filename = '/'.join(filenameparts)
+                filename = path.join(*filenameparts)
         
         filepath = path.join(self.__datadir__, filename)
         
@@ -142,8 +142,8 @@ class Fediverse:
         Requests are cached if a cache object was passed to constructor.
         '''
         
-        if session is None:
-            session = self.http_session()
+        # if session is None:
+        #     session = self.http_session()
         
         return self.request(url, session, method='get', *args, **kwargs)
     
@@ -154,8 +154,8 @@ class Fediverse:
         Accepts same args as requests's module "post" method.
         '''
         
-        if session is None:
-            session = self.http_session()
+        # if session is None:
+        #     session = self.http_session()
         
         return self.request(url, session, method='post', *args, **kwargs)
     
@@ -229,14 +229,13 @@ class Fediverse:
         
         return results
     
-    def http_session(self, session=None):
+    async def http_session(self, session=None):
         if not hasattr(self, '__http_session__'):
             setattr(self, '__http_session__', None)
         
         if session is not None:
             if self.__http_session__ is not None and not self.__http_session__.closed:
-                ## FIXME RuntimeWarning: coroutine 'ClientSession.close' was never awaited
-                self.__http_session__.close()
+                await self.__http_session__.close()
             self.__http_session__ = session
         elif self.__http_session__ is None or self.__http_session__.closed:
             self.__http_session__ = aiohttp.ClientSession()
@@ -251,6 +250,10 @@ class Fediverse:
         method: 'get' | 'post' | e.t.c.
         **kwargs: other kwargs that aiohttp accepts
         '''
+        
+        if session is None:
+            ## Maybe created earlier, trying to reuse
+            session = getattr(self, '__http_session__', None)
         
         if self.__headers__ is not None:
             headers = self.__headers__.copy()
@@ -417,6 +420,12 @@ class Fediverse:
         
         endpoints = []
         results = []
+        
+        if hasattr(self, 'federated_endpoints'):
+            async for endpoint in self.federated_endpoints.aiterator():
+                if endpoint.uri not in endpoints:
+                    endpoints.append(endpoint.uri)
+        
         for tag in activity['object']['tag']:
             if tag['type'] == 'Mention':
                 results.append(self.get(tag['href']))
@@ -435,9 +444,16 @@ class Fediverse:
         activity['object']['mentionResults'] = []
         
         for endpoint in endpoints:
+            start_ts = datetime.now().timestamp()
             results.append(self.post(endpoint, json=activity))
+            diff_ts = datetime.now().timestamp() - start_ts
+            self.stderrlog('REQUEST TS:', endpoint, diff_ts)
         
+        start_ts = datetime.now().timestamp()
         results = await self.gather_http_responses(*results)
+        diff_ts = datetime.now().timestamp() - start_ts
+        self.stderrlog('REQUESTS GATHER TS:', diff_ts)
+        
         for n, result in enumerate(results):
             activity['object']['mentionResults'].append((endpoints[n], result))
         
@@ -650,7 +666,18 @@ class Fediverse:
         sign = b64encode(crypto.sign(pkey, str2sign, 'sha256')).decode('utf-8')
         return f'keyId="{self.__user__["publicKey"]["id"]}",algorithm="rsa-sha256",headers="(request-target) host date digest",signature="{sign}"'
     
-    async def save_reply(self, apobject):
+    async def save_reply(self, activity):
+        '''
+        Saving incoming reply activity to json file
+        activity: activity dict
+        '''
+        ## Backward compatibility
+        ## We saved objects rather than activity in the past
+        if '@context' in activity and 'object' in activity:
+            apobject = activity['object']
+        else:
+            apobject = activity
+        
         context = apobject.get('context', None)
         conversation = apobject.get('conversation', None)
         
@@ -672,14 +699,20 @@ class Fediverse:
                 apobject['authorInfo'] = author_info
         
         savepath = path.join(inReplyTo.path, f'{self.uniqid()}.reply.json')
-        self.save(savepath, apobject)
+        self.save(savepath, activity)
         return savepath
     
-    async def process_object(self, apobject):
+    async def process_object(self, activity):
         '''
         Process object (usually activity from federated instances).
         apobject: activitypub object, dict
         '''
+        
+        if '@context' in activity and 'object' in activity:
+            apobject = activity['object']
+        else:
+            ## In the past an object was being supplied
+            apobject = activity
         
         result = None
         
@@ -710,6 +743,11 @@ class Fediverse:
                     try:
                         with open(reply_file, 'rt') as f:
                             reply = json.load(f)
+                            
+                            ## Backward compatibility
+                            ## We saved objects in the past rather than activity
+                            if '@context' in reply and 'object' in reply:
+                                reply = reply['object']
                             
                             if reply['id'] in ids:
                                 continue

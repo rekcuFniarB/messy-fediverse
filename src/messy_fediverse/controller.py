@@ -448,7 +448,7 @@ async def save_activity(request, activity):
             if apobject.get('type', None) == 'Follow' and object_id:
                 ## if unfollow request
                 followers = Follower.objects.filter(uri=object_id)
-                followers.update(disabled=True)
+                await followers.aupdate(disabled=True)
     
     return act
 

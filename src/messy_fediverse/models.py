@@ -34,8 +34,9 @@ class Activity(models.Model):
         ('CRE', 'Create'),
         ('NTE', 'Note'),
         ('DEL', 'Delete'),
-        ('THO', 'Thombstone'),
-        ('LKE', 'Like')
+        ('TOM', 'Tombstone'),
+        ('LKE', 'Like'),
+        ('ANN', 'Announce')
     )
     ts = models.DateTimeField('Timestamp', auto_now_add=True)
     uri = models.URLField('Activity URI', unique=True, null=False)

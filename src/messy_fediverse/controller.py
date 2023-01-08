@@ -315,8 +315,8 @@ def main(request):
     else:
         return redirect('/')
 
-def root_json(request):
-    log_request(request)
+async def root_json(request):
+    await log_request(request)
     return ActivityResponse(fediverse_factory(request).user, request)
 
 #@csrf_exempt
@@ -441,8 +441,9 @@ async def save_activity(request, activity):
                     to=[actorInfo['id']]
                 )
                 response, = await fediverse.gather_http_responses(
-                    fediverse.post(actorInfo['endpoints']['sharedInbox'], session, json=acceptActivity)
+                    fediverse.post(actorInfo['inbox'], session, json=acceptActivity)
                 )
+                stderrlog('FOLLOW ACCEPT RESPONSE:', response, acceptActivity)
             ## endif 'FOL' (follow request)
         elif actType == 'UND':
             if apobject.get('type', None) == 'Follow' and object_id:

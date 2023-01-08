@@ -62,7 +62,8 @@ class FollowerAdmin(admin.ModelAdmin):
                 to=[actorInfo['id']]
             )
             response, = await fediverse.gather_http_responses(
-                fediverse.post(actorInfo['endpoints']['sharedInbox'], session, json=acceptActivity)
+                # fediverse.post(actorInfo['endpoints']['sharedInbox'], session, json=acceptActivity)
+                fediverse.post(actorInfo['inbox'], session, json=acceptActivity)
             )
         
         return response

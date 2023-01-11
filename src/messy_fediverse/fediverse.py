@@ -493,7 +493,8 @@ class Fediverse:
             ## Using some values from object
             for k in activity['object']:
                 if k in ('actor', 'to', 'cc', 'directMessage', 'context', 'conversation'):
-                    activity[k] = activity['object'][k]
+                    if k not in activity:
+                        activity[k] = activity['object'][k]
         
         return activity
     

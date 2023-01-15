@@ -603,7 +603,8 @@ class Fediverse:
             "summary": subject,
             "to": [
                 source.get('attributedTo', None),
-                "https://www.w3.org/ns/activitystreams#Public"
+                "https://www.w3.org/ns/activitystreams#Public",
+                self.followers
             ],
             "cc": [],
             "directMessage": source.get('directMessage', False),

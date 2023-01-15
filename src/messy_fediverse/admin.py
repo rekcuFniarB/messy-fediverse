@@ -14,21 +14,25 @@ class FollowerAdmin(admin.ModelAdmin):
         
         ## obj._loaded_values provided by model's custom from_db()
         if not form.cleaned_data['disabled'] and form.cleaned_data['accepted']:
-            if not obj._loaded_values['accepted']:
-                try:
-                    result = async_to_sync(self.send_accept_follow)(request, obj)
-                except BaseException as e:
-                    # if e.args[0] == 'Event loop is closed':
-                    #     loop = asyncio.new_event_loop()
-                    #     stderrlog('NEW LOOP:', loop)
-                    #     result = async_to_sync(self.send_accept_follow)(fediverse, obj)
-                    #     # result = asyncio.run(self.send_accept_follow(request, obj))
-                    # else:
-                    #     raise
-                    raise
-                
-                stderrlog('ACCEPT RESULT:', result)
-                ## FIXME check response and discard "accepted" if request failed.
+            if hasattr(obj, '_loaded_values'):
+                if not obj._loaded_values['accepted']:
+                    try:
+                        result = async_to_sync(self.send_accept_follow)(request, obj)
+                    except BaseException as e:
+                        # if e.args[0] == 'Event loop is closed':
+                        #     loop = asyncio.new_event_loop()
+                        #     stderrlog('NEW LOOP:', loop)
+                        #     result = async_to_sync(self.send_accept_follow)(fediverse, obj)
+                        #     # result = asyncio.run(self.send_accept_follow(request, obj))
+                        # else:
+                        #     raise
+                        raise
+                    
+                    stderrlog('ACCEPT RESULT:', result)
+                    ## FIXME check response and discard "accepted" if request failed.
+            else:
+                ## There is no _loaded_values when creating new
+                form.cleaned_data['accepted'] = False
         
         return super().save_model(request, obj, form, change)
     

@@ -193,11 +193,11 @@ class VerifySignature:
             if signature.get('algorithm', 'rsa-sha256') not in ('sha256', 'rsa-sha256'):
                 return self.response_error(request, 'Unsupported signature algorithm')
             
+            actor = None
             fediverse = fediverse_factory(request)
             async with aiohttp.ClientSession() as session:
                 try:
-                    actor = await fediverse.gather_http_responses(fediverse.get(signature['keyId'], session=session))
-                    actor = actor[0]
+                    actor, = await fediverse.gather_http_responses(fediverse.get(signature['keyId'], session=session))
                 except BaseException as e:
                     if settings.DEBUG:
                         ## Raise original exception (probably HTTPError)
@@ -206,7 +206,7 @@ class VerifySignature:
                         raise PermissionDenied(*e.args)
             
             if type(actor) is not dict:
-                return self.response_error(request, f'Actor verify failed: {actor}')
+                return self.response_error(request, f'Actor verify failed: {type(actor)} {actor}')
             
             actorKey = actor.get('publicKey', None)
             if not actorKey:

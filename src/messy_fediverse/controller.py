@@ -316,6 +316,7 @@ def main(request):
         return redirect('/')
 
 def root_json(request):
+    ## FIXME never awaited warning
     log_request(request)
     return ActivityResponse(fediverse_factory(request).user, request)
 
@@ -412,7 +413,7 @@ async def save_activity(request, activity):
         
         if actType == 'FOL':
             ## If follow request
-            follower = await Follower.objects.filter(uri=act.actor_uri).afirst()
+            follower = await Follower.objects.filter(uri=act.actor_uri, object_uri=object_id).afirst()
             ## Retrieving actor info from the net
             ## Getting existing session
             session = await fediverse.http_session()
@@ -421,48 +422,50 @@ async def save_activity(request, activity):
             if type(actorInfo) is not dict or 'endpoints' not in actorInfo or type(actorInfo['endpoints']) is not dict or 'sharedInbox' not in actorInfo['endpoints']:
                 actorInfo = None
             
-            if not follower:
-                if actorInfo:
-                    endpoint = await FederatedEndpoint.objects.filter(uri=actorInfo['endpoints']['sharedInbox']).afirst()
-                    if not endpoint:
-                        ## Not created yet
-                        endpoint = FederatedEndpoint(uri=actorInfo['endpoints']['sharedInbox'])
-                        await sync_to_async(endpoint.save)()
-                    
+            if actorInfo:
+                ## Creating endpoint if not exists yet
+                endpoint = await FederatedEndpoint.objects.filter(uri=actorInfo['endpoints']['sharedInbox']).afirst()
+                if not endpoint:
+                    ## Not created yet
+                    endpoint = FederatedEndpoint(uri=actorInfo['endpoints']['sharedInbox'])
+                    await sync_to_async(endpoint.save)()
+                
+                if not follower:
                     follower = Follower(
                         uri=act.actor_uri,
-                        activity=act,
                         object_uri=object_id,
-                        endpoint=endpoint,
                         disabled=False,
                         accepted=False
                     )
-                    await sync_to_async(follower.save)()
-            
-            if follower and actorInfo and not fediverse.manuallyApprovesFollowers:
-                apobject = {
-                    'id': activity['id'],
-                    'type': 'Follow',
-                    'actor': activity['actor'],
-                    'object': object_id
-                }
-                acceptActivity = fediverse.activity(
-                    type='Accept',
-                    object=apobject,
-                    to=[actorInfo['id']],
-                    inReplyTo=activity_id,
-                    actor=fediverse.id
-                )
-                response, = await fediverse.gather_http_responses(
-                    fediverse.post(actorInfo['inbox'], session, json=acceptActivity)
-                )
-                follower.accepted = True
-                await sync_to_async(follower.save)()
                 
-                acceptActivity['_response'] = response
-                ## Saving outgoing too
-                await save_activity(request, acceptActivity)
-            ## endif 'FOL' (follow request)
+                endpoint=endpoint
+                follower.activity = act
+                
+                if not fediverse.manuallyApprovesFollowers:
+                    apobject = {
+                        'id': activity['id'],
+                        'type': activity['type'],
+                        'actor': activity['actor'],
+                        'object': object_id
+                    }
+                    acceptActivity = fediverse.activity(
+                        type='Accept',
+                        object=apobject,
+                        to=[actorInfo['id']],
+                        inReplyTo=activity_id,
+                        actor=fediverse.id
+                    )
+                    response, = await fediverse.gather_http_responses(
+                        fediverse.post(actorInfo['inbox'], session, json=acceptActivity)
+                    )
+                    acceptActivity['_response'] = response
+                    ## Saving outgoing too
+                    await save_activity(request, acceptActivity)
+                    follower.accepted = True
+                
+                await sync_to_async(follower.save)()
+                    
+        ## endif 'FOL' (follow request)
         elif actType == 'UND':
             if apobject.get('type', None) == 'Follow' and object_id:
                 ## if unfollow request

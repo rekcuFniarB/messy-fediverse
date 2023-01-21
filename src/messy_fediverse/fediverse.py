@@ -116,6 +116,8 @@ class Fediverse:
                 f.write(data)
             else:
                 json.dump(data, f)
+        
+        return filepath
     
     def read(self, filename):
         '''
@@ -546,7 +548,7 @@ class Fediverse:
         ## Send mentions
         await self.mention(activity)
         ## Resave with result
-        self.save(data['id'] + '.json', data)
+        activity['_json'] = self.save(data['id'] + '.json', data)
         return activity
     
     async def reply(self, source, message, subject='', url=None):
@@ -648,7 +650,7 @@ class Fediverse:
         ## Send mentions
         await self.mention(activity)
         ## Resave with result
-        self.save(save_path, data)
+        activity['_json'] = self.save(save_path, data)
         return activity
     
     def sign(self, url, headers):

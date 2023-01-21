@@ -364,7 +364,7 @@ async def save_activity(request, activity):
     activity: dict
     '''
     act = None
-    result = activity.get('process_result', None)
+    result = activity.get('_json', None)
     apobject = activity.get('object', {})
     activity_id = activity.get('id', None)
     incoming = True
@@ -376,7 +376,7 @@ async def save_activity(request, activity):
         apobject = {}
     
     if not result:
-        result = apobject.get('process_result', None)
+        result = apobject.get('_json', None)
     
     actType = None
     act_type = activity.get('type', apobject.get('type', ''))
@@ -661,9 +661,9 @@ class Inbox(View):
                             data['object']['requestMeta'][k] = request.META[k]
                     
                     result = await fediverse.process_object(data)
-                    data['object']['process_result'] = result
-                    if 'actor' in data:
-                        data['_actor'], = await fediverse.gather_http_responses(fediverse.get(data['actor'], session))
+                    data['_json'] = result
+                    if 'actor' in data and 'authorInfo' not in data and 'authorInfo' not in data['object']:
+                        data['authorInfo'], = await fediverse.gather_http_responses(fediverse.get(data['actor'], session))
                     
                     await email_notice(request, data['object'])
                     should_log_request = False
@@ -961,6 +961,9 @@ class Interact(View):
                     context = urlparse(context).path
                     redirect_path = context.replace(reversepath('dumb', 'context'), '').strip('/')
                     redirect_path = reversepath('replies', redirect_path)
+                
+                save_activity(request, result)
+                
                 return redirect(redirect_path)
         
         data['form'] = form

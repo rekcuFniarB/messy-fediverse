@@ -161,7 +161,8 @@ async def log_request(request, data=None):
     else:
         return False
 
-async def email_notice(request, ap_object):
+async def email_notice(request, activity):
+    ap_object = activity.get('object', {})
     if 'type' in ap_object:
         fediverse = fediverse_factory(request)
         subj_parts = ['Fediverse', ap_object['type']]
@@ -196,7 +197,7 @@ async def email_notice(request, ap_object):
             {url}
             <br>
             <h2>Raw data:</h2>
-            <code><pre>{json.dumps(ap_object, indent=4)}</pre></code>
+            <code><pre>{json.dumps(activity, indent=4)}</pre></code>
             
             <h2>Request debug info:</h2>
             <code><pre>
@@ -668,7 +669,7 @@ class Inbox(View):
                     if 'actor' in data and 'authorInfo' not in data and 'authorInfo' not in data['object']:
                         data['authorInfo'], = await fediverse.gather_http_responses(fediverse.get(data['actor'], session))
                     
-                    await email_notice(request, data['object'])
+                    await email_notice(request, data)
                     should_log_request = False
                 
                 saveResult = await save_activity(request, data)

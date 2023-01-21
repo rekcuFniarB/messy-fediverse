@@ -553,13 +553,15 @@ class Fediverse:
         data['tag'].extend(parse_result['tag'])
         data['attachment'].extend(parse_result['attachment'])
         
-        ## Presave, if receiving side wants to check if status exists
-        self.save(data['id'] + '.json', data)
         activity = self.activity(object=data)
+        
+        ## Presave, if receiving side wants to check if status exists
+        self.save(data['id'] + '.json', activity)
+        
         ## Send mentions
         await self.mention(activity)
         ## Resave with result
-        activity['_json'] = self.save(data['id'] + '.json', data)
+        activity['_json'] = self.save(data['id'] + '.json', activity)
         return activity
     
     async def reply(self, source, message, subject='', url=None):
@@ -650,14 +652,15 @@ class Fediverse:
         elif 'conversation' in data and data['conversation'].startswith(self.id):
             reply_save_path = data['conversation']
         
+        activity = self.activity(object=data)
+        
         ## Presave, if receiving side wants to check if status exists
-        self.save(save_path, data)
+        self.save(save_path, activity)
         
         if reply_save_path:
             reply_save_path = path.join(reply_save_path, path.basename(data['id'].strip('/')) + '.reply.json')
             self.symlink(save_path, reply_save_path)
         
-        activity = self.activity(object=data)
         ## Send mentions
         await self.mention(activity)
         ## Resave with result

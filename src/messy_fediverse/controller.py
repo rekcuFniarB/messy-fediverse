@@ -364,7 +364,7 @@ async def save_activity(request, activity):
     activity: dict
     '''
     act = None
-    result = activity.get('_json', None)
+    json_path = activity.get('_json', None)
     apobject = activity.get('object', {})
     activity_id = activity.get('id', None)
     incoming = True
@@ -375,8 +375,8 @@ async def save_activity(request, activity):
         object_id = apobject
         apobject = {}
     
-    if not result:
-        result = apobject.get('_json', None)
+    if not json_path:
+        json_path = apobject.get('_json', None)
     
     actType = None
     act_type = activity.get('type', apobject.get('type', ''))
@@ -401,11 +401,14 @@ async def save_activity(request, activity):
                 object_uri = object_id,
                 incoming = incoming
             )
-            if result:
-                ## If json already stored
-                activity_file = fediverse.normalize_file_path(result)
-                if path.isfile(activity_file):
-                    act.self_json.name = path.relpath(activity_file, settings.MEDIA_ROOT)
+            
+            ## If json already stored
+            if json_path and json_path.endswith('.json'):
+                if not path.isfile(json_path):
+                    ## Tryint to normalize
+                    json_path = fediverse.normalize_file_path(json_path)
+                if path.isfile(json_path):
+                    act.self_json.name = path.relpath(json_path, settings.MEDIA_ROOT)
             else:
                 act.self_json.save('activity.json', content=ContentFile(json.dumps(activity)), save=False)
             

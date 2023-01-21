@@ -444,8 +444,6 @@ class Fediverse:
             if type(endpoint) is list and len(endpoint) > 0:
                 ## Never saw such case but anyway...
                 endpoint = endpoint[0]
-            else:
-                endpoint = None
             
             if endpoint:
                 if endpoint not in endpoints:

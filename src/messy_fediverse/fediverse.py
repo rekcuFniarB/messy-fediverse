@@ -434,16 +434,29 @@ class Fediverse:
         results = await self.gather_http_responses(*results)
         
         for user in results:
+            endpoint = None
             if type(user) is dict and 'endpoints' in user and 'sharedInbox' in user['endpoints']:
-                if user['endpoints']['sharedInbox'] not in endpoints:
-                    endpoints.append(user['endpoints']['sharedInbox'])
+                endpoint = user['endpoints']['sharedInbox']
+            elif 'inbox' in user:
+                ## I saw instances without sharedInbox, at least Honk
+                endpoint = user['inbox']
+            
+            if type(endpoint) is list and len(endpoint) > 0:
+                ## Never saw such case but anyway...
+                endpoint = endpoint[0]
+            else:
+                endpoint = None
+            
+            if endpoint:
+                if endpoint not in endpoints:
+                    endpoints.append(endpoint)
                 if user['id'] not in activity['object']['cc'] and user['id'] not in activity['object']['to']:
                     activity['object']['cc'].append(user['id'])
         
         activity['cc'] = activity['object']['cc']
         
         results = []
-        activity['object']['mentionResults'] = []
+        activity['mentionResults'] = []
         
         for endpoint in endpoints:
             start_ts = datetime.now().timestamp()
@@ -457,10 +470,10 @@ class Fediverse:
         self.stderrlog('REQUESTS GATHER TS:', diff_ts)
         
         for n, result in enumerate(results):
-            activity['object']['mentionResults'].append((endpoints[n], result))
+            activity['mentionResults'].append((endpoints[n], result))
         
         ## For debug
-        activity['object']['mentionEndpoints'] = endpoints
+        activity['mentionEndpoints'] = endpoints
         
         return results
     

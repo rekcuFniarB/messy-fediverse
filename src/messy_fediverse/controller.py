@@ -784,8 +784,10 @@ def status(request, rpath):
     with open(filepath, 'rt', encoding='utf-8') as f:
         data = json.load(f)
     
-    if 'object' in data and type(data['object']) is dict:
-        data = data['object']
+    activity = data
+    
+    if 'object' in activity and type(activity['object']) is dict:
+        data = activity['object']
     
     if 'conversation' not in data and 'context' not in data:
         data['context'] = data['conversation'] = data['id']
@@ -800,7 +802,7 @@ def status(request, rpath):
         return ActivityResponse(data, request)
     
     if request.user.is_staff:
-        data['raw_json'] = json.dumps(data, indent=4)
+        data['raw_json'] = json.dumps(activity, indent=4)
     elif 'inReplyTo' in data and data['inReplyTo']:
         return redirect(data['inReplyTo'])
     elif 'url' in data and data['url'] and data['url'] != data['id']:

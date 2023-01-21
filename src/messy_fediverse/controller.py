@@ -964,7 +964,7 @@ class Interact(View):
                     redirect_path = context.replace(reversepath('dumb', 'context'), '').strip('/')
                     redirect_path = reversepath('replies', redirect_path)
                 
-                save_activity(request, result)
+                await save_activity(request, result)
                 
                 return redirect(redirect_path)
         

@@ -423,15 +423,19 @@ async def save_activity(request, activity):
             session = await fediverse.http_session()
             actorInfo, = await fediverse.gather_http_responses(fediverse.get(act.actor_uri, session=session))
             ## If actor info is valid
-            if type(actorInfo) is not dict or 'endpoints' not in actorInfo or type(actorInfo['endpoints']) is not dict or 'sharedInbox' not in actorInfo['endpoints']:
-                actorInfo = None
+            endpoint_url = None
+            if type(actorInfo) is dict:
+                if 'endpoints' in actorInfo and type(actorInfo['endpoints']) is dict and 'sharedInbox' in actorInfo['endpoints']:
+                    endpoint_url = actorInfo['endpoints']['sharedInbox']
+                elif 'inbox' in actorInfo:
+                    endpoint_url = actorInfo['inbox']
             
-            if actorInfo:
+            if endpoint_url:
                 ## Creating endpoint if not exists yet
-                endpoint = await FederatedEndpoint.objects.filter(uri=actorInfo['endpoints']['sharedInbox']).afirst()
+                endpoint = await FederatedEndpoint.objects.filter(uri=endpoint_url).afirst()
                 if not endpoint:
                     ## Not created yet
-                    endpoint = FederatedEndpoint(uri=actorInfo['endpoints']['sharedInbox'])
+                    endpoint = FederatedEndpoint(uri=endpoint_url)
                     await sync_to_async(endpoint.save)()
                 
                 if not follower:
@@ -442,7 +446,7 @@ async def save_activity(request, activity):
                         accepted=False
                     )
                 
-                endpoint=endpoint
+                follower.endpoint = endpoint
                 follower.activity = act
                 
                 if not fediverse.manuallyApprovesFollowers:

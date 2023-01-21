@@ -664,7 +664,7 @@ class Fediverse:
         ## Send mentions
         await self.mention(activity)
         ## Resave with result
-        activity['_json'] = self.save(save_path, data)
+        activity['_json'] = self.save(save_path, activity)
         return activity
     
     def sign(self, url, headers):
@@ -714,7 +714,7 @@ class Fediverse:
                 pass
             
             if author_info:
-                apobject['authorInfo'] = author_info
+                activity['authorInfo'] = author_info
         
         savepath = path.join(inReplyTo.path, f'{self.uniqid()}.reply.json')
         self.save(savepath, activity)
@@ -760,12 +760,13 @@ class Fediverse:
                     reply_file = path.join(replies_dir, reply_file)
                     try:
                         with open(reply_file, 'rt') as f:
-                            reply = json.load(f)
+                            activity = json.load(f)
+                            reply = activity
                             
                             ## Backward compatibility
                             ## We saved objects in the past rather than activity
                             if '@context' in reply and 'object' in reply:
-                                reply = reply['object']
+                                reply = activity['object']
                             
                             if reply['id'] in ids:
                                 continue
@@ -773,12 +774,15 @@ class Fediverse:
                             ids.append(reply['id'])
                             
                             if content:
-                                if 'authorInfo' not in reply:
+                                reply['authorInfo'] = reply.get('authorInfo', activity.get('authorInfo', None))
+                                
+                                if not reply['authorInfo']:
                                     if 'attributedTo' in reply:
                                         if reply['attributedTo'] == self.id:
                                             reply['authorInfo'] = {'preferredUsername': self.preferredUsername}
                                         else:
                                             try:
+                                                ## Fixme: make requests at once
                                                 reply['authorInfo'], = await self.gather_http_responses(self.get(reply['attributedTo']))
                                             except:
                                                 reply['authorInfo'] = {'preferredUsername': path.basename(reply['attributedTo'].strip('/'))}

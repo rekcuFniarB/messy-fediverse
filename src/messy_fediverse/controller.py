@@ -116,7 +116,7 @@ async def log_request(request, data=None):
         
         if data:
             user_host = ''
-            if 'authorInfo' in data and 'user@host' in data['_actor']:
+            if 'authorInfo' in data and 'user@host' in data['authorInfo']:
                 user_host = data['authorInfo']['user@host']
             
             subject = f'Fediverse {data["type"]} {user_host}'
@@ -171,21 +171,21 @@ async def email_notice(request, activity):
             subj_parts.append(summary)
         attributedTo = ap_object.get('attributedTo', None)
         if attributedTo:
-            if 'authorInfo' not in ap_object:
-                ap_object['authorInfo'] = {}
+            if 'authorInfo' not in activity:
+                activity['authorInfo'] = {}
                 try:
                     async with aiohttp.ClientSession() as session:
                         ap_object['authorInfo'], = await fediverse.gather_http_responses(fediverse.get(attributedTo, session))
                 except:
                     pass
             
-            if 'authorInfo' in ap_object and type(ap_object['authorInfo']) is dict:
-                if 'preferredUsername' in ap_object['authorInfo'] and not ap_object['authorInfo'].get('user@host', None):
-                    ap_object['authorInfo']['user@host'] = ''
-                    author_url = urlparse(ap_object['authorInfo']['id'])
-                    ap_object['authorInfo']['user@host'] = f'{ap_object["authorInfo"]["preferredUsername"]}@{author_url.netloc}'
+            if 'authorInfo' in activity and type(activity['authorInfo']) is dict:
+                if 'preferredUsername' in activity['authorInfo'] and not activity['authorInfo'].get('user@host', None):
+                    activity['authorInfo']['user@host'] = ''
+                    author_url = urlparse(activity['authorInfo']['id'])
+                    activity['authorInfo']['user@host'] = f'{activity["authorInfo"]["preferredUsername"]}@{author_url.netloc}'
                 subj_parts.append('by')
-                subj_parts.append(ap_object['authorInfo'].get('user@host', ''))
+                subj_parts.append(activity['authorInfo'].get('user@host', ''))
         
         content = ap_object.get('content', '')
         

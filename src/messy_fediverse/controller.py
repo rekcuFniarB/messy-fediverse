@@ -116,8 +116,8 @@ async def log_request(request, data=None):
         
         if data:
             user_host = ''
-            if '_actor' in data and 'user@host' in data['_actor']:
-                user_host = data['_actor']['user@host']
+            if 'authorInfo' in data and 'user@host' in data['_actor']:
+                user_host = data['authorInfo']['user@host']
             
             subject = f'Fediverse {data["type"]} {user_host}'
             body = json.dumps(data, indent=4)

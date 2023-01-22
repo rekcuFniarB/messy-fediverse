@@ -11,10 +11,14 @@
                 event.preventDefault();
                 var requestUrl = new URL(event.target.action);
                 requestParams = {
-                    method: event.target.method.toUpperCase(),
                     headers: {
                         'X-Requested-With': 'XMLHttpRequest'
                     }
+                }
+                
+                requestParams.method = event.target.method.toUpperCase();
+                if (event.target.dataset.method) {
+                    requestParams.method = event.target.dataset.method.toUpperCase();
                 }
                 
                 var formParams;
@@ -38,7 +42,11 @@
                     }
                     
                     if (!!input.name && !!input.value) {
-                        formParams.set(input.name, input.value)
+                        formParams.set(input.name, input.value);
+                        if (input.name.toLowerCase().indexOf('csrf') > -1) {
+                            // Sending also as header for methods like DELETE
+                            requestParams.headers['X-CSRFToken'] = input.value;
+                        }
                     }
                 }
                 

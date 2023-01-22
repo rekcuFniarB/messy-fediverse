@@ -6,7 +6,7 @@ from django.core.cache import cache
 from django.core.mail import mail_admins
 from django.core.files.base import ContentFile
 from django.views import View
-from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.csrf import csrf_exempt, csrf_protect
 from django.utils.decorators import method_decorator
 from django.templatetags.static import static as _staticurl
 from django.utils.html import strip_tags
@@ -779,51 +779,89 @@ def webfinger(request):
         response = JsonResponse(result)
     return response
 
-@csrf_exempt
-def status(request, rpath):
-    proto = request_protocol(request)
-    fediverse = fediverse_factory(request)
-    filepath = fediverse.normalize_file_path(f'{request.path.strip("/")}.json')
-    
-    if not path.isfile(filepath):
-        raise Http404(f'Status {path} not found.')
-    
-    data = {}
-    with open(filepath, 'rt', encoding='utf-8') as f:
-        data = json.load(f)
-    
-    activity = data
-    
-    if 'object' in activity and type(activity['object']) is dict:
-        data = activity['object']
-    
-    if 'conversation' not in data and 'context' not in data:
-        data['context'] = data['conversation'] = data['id']
-    
-    if is_json_request(request):
-        if '@context' not in data:
-            data['@context'] = fediverse.user.get('@context')
+#@method_decorator(csrf_exempt, name='dispatch')
+class Status(View):
+    async def get(self, request, rpath):
+        proto = request_protocol(request)
+        fediverse = fediverse_factory(request)
+        filepath = fediverse.normalize_file_path(f'{request.path.strip("/")}.json')
         
-        if 'replies' not in data:
-            data['replies'] = f'{proto}://{request.site.domain}{reversepath("replies", request.path)}'
+        if not path.isfile(filepath):
+            raise Http404(f'Status {path} not found.')
         
-        return ActivityResponse(data, request)
+        data = {}
+        with open(filepath, 'rt', encoding='utf-8') as f:
+            apobject = json.load(f)
+        
+        activity = apobject
+        
+        if 'object' in activity and type(activity['object']) is dict:
+            apobject = activity['object']
+        
+        if 'conversation' not in apobject and 'context' not in apobject:
+            apobject['context'] = apobject['conversation'] = apobject['id']
+        
+        if is_json_request(request):
+            if '@context' not in apobject:
+                apobject['@context'] = fediverse.user.get('@context')
+            
+            if 'replies' not in apobject:
+                apobject['replies'] = f'{proto}://{request.site.domain}{reversepath("replies", request.path)}'
+            
+            return ActivityResponse(apobject, request)
+        
+        is_staff = await request_user_is_staff(request)
+        
+        if is_staff:
+            data['raw_json'] = json.dumps(activity, indent=4)
+        elif 'inReplyTo' in apobject and apobject['inReplyTo']:
+            return redirect(apobject['inReplyTo'])
+        elif 'url' in apobject and apobject['url'] and apobject['url'] != apobject['id']:
+            return redirect(apobject['url'])
+        
+        if apobject['context'].startswith(fediverse.id):
+            apobject['reply_path'] = reversepath('replies', urlparse(apobject['id']).path)
+        
+        if 'published' in apobject and apobject['published']:
+            apobject['published'] = datetime.fromisoformat(apobject['published'].rstrip('Z'))
+        
+        
+        data['deleted'] = False
+        object_uri = f'{proto}://{request.site.domain}{reversepath("status", rpath)}'
+        delActivity = await Activity.objects.filter(object_uri=object_uri, activity_type='DEL', incoming=False, actor_uri=fediverse.id).afirst()
+        
+        if (delActivity):
+            if not is_staff:
+                raise PermissionDenied('Object was deleted')
+            
+            data['deleted'] = {
+                'id': delActivity.pk,
+                'uri': delActivity.uri,
+                'meta': delActivity._meta,
+                #'url': reverse(f'admin:{delActivity._meta.app_label}_{delActivity._meta.model_name}_change',  args=[delActivity.pk])
+            }
+        
+        data['activity'] = activity
+        data['object'] = apobject
+        data['rpath'] = rpath
+        
+        return render(request, 'messy/fediverse/status.html', data)
+        #raise Http404(f'Status {path} not found.')
     
-    if request.user.is_staff:
-        data['raw_json'] = json.dumps(activity, indent=4)
-    elif 'inReplyTo' in data and data['inReplyTo']:
-        return redirect(data['inReplyTo'])
-    elif 'url' in data and data['url'] and data['url'] != data['id']:
-        return redirect(data['url'])
-    
-    if data['context'].startswith(fediverse.id):
-        data['reply_path'] = reversepath('replies', urlparse(data['id']).path)
-    
-    if 'published' in data and data['published']:
-        data['published'] = datetime.fromisoformat(data['published'].rstrip('Z'))
-    
-    return render(request, 'messy/fediverse/status.html', data)
-    #raise Http404(f'Status {path} not found.')
+    async def delete(self, request, rpath):
+        if not await request_user_is_staff(request):
+            raise PermissionDenied
+        
+        proto = request_protocol(request)
+        object_uri = f'{proto}://{request.site.domain}{reversepath("status", rpath)}'
+        fediverse = fediverse_factory(request)
+        async with aiohttp.ClientSession() as session:
+            await fediverse.http_session(session)
+            activity = await fediverse.delete_status(object_uri)
+            await save_activity(request, activity)
+        
+        # return redirect(reversepath('status', rpath))
+        return JsonResponse({'alert': f'Delete activity sent.', 'activity': activity});
 
 class Interact(View):
     async def get(self, request):

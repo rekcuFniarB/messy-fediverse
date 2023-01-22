@@ -412,13 +412,13 @@ class Fediverse:
         result['content'] = content
         return result
     
-    async def mention(self, activity):
+    async def federate(self, activity):
         '''
-        Sends copy of status to all mentioned users.
+        Sends activity to other instances.
         activity: dict, activity data.
         '''
-        if 'object' not in activity or 'tag' not in activity['object']:
-            return False
+        # if 'object' not in activity or 'tag' not in activity['object']:
+        #     return False
         
         endpoints = []
         results = []
@@ -428,10 +428,13 @@ class Fediverse:
                 if endpoint.uri not in endpoints:
                     endpoints.append(endpoint.uri)
         
-        for tag in activity['object']['tag']:
-            if tag['type'] == 'Mention':
-                results.append(self.get(tag['href']))
-        results = await self.gather_http_responses(*results)
+        if 'tag' in activity['object']:
+            for tag in activity['object']['tag']:
+                if tag['type'] == 'Mention':
+                    results.append(self.get(tag['href']))
+        
+        if len(results) > 0:
+            results = await self.gather_http_responses(*results)
         
         for user in results:
             endpoint = None
@@ -451,10 +454,8 @@ class Fediverse:
                 if user['id'] not in activity['object']['cc'] and user['id'] not in activity['object']['to']:
                     activity['object']['cc'].append(user['id'])
         
-        activity['cc'] = activity['object']['cc']
-        
         results = []
-        activity['mentionResults'] = []
+        activity['endpointsResults'] = []
         
         for endpoint in endpoints:
             start_ts = datetime.now().timestamp()
@@ -468,10 +469,10 @@ class Fediverse:
         self.stderrlog('REQUESTS GATHER TS:', diff_ts)
         
         for n, result in enumerate(results):
-            activity['mentionResults'].append((endpoints[n], result))
+            activity['endpointsResults'].append((endpoints[n], result))
         
         ## For debug
-        activity['mentionEndpoints'] = endpoints
+        activity['requestEndpoints'] = endpoints
         
         return results
     
@@ -504,10 +505,11 @@ class Fediverse:
         
         if 'object' in activity and type(activity['object']) is dict:
             ## Using some values from object
-            for k in activity['object']:
-                if k in ('actor', 'to', 'cc', 'directMessage', 'context', 'conversation'):
-                    if k not in activity:
-                        activity[k] = activity['object'][k]
+            for k in ('actor', 'to', 'cc', 'directMessage', 'context', 'conversation'):
+                if k in activity['object']:
+                    activity[k] = activity['object'][k]
+            for k in ('to', 'cc', 'actor'):
+                activity['object'][k] = activity[k]
         
         return activity
     
@@ -525,7 +527,6 @@ class Fediverse:
         data = {
             'id': status_id,
             'type': "Note",
-            'actor': self.id,
             'url': status_id,
             'published': now.isoformat() + 'Z',
             'attributedTo': self.id,
@@ -539,11 +540,6 @@ class Fediverse:
             'source': message,
             'sensitive': False,
             'summary': subject,
-            'to': [
-                'https://www.w3.org/ns/activitystreams#Public',
-                self.followers
-            ],
-            'cc': [],
             'tag': [],
             "attachment": []
         }
@@ -559,7 +555,7 @@ class Fediverse:
         self.save(data['id'] + '.json', activity)
         
         ## Send mentions
-        await self.mention(activity)
+        await self.federate(activity)
         ## Resave with result
         activity['_json'] = self.save(data['id'] + '.json', activity)
         return activity
@@ -602,7 +598,6 @@ class Fediverse:
         data = {
             "id": status_id,
             "type": "Note",
-            "actor": self.id,
             "url": status_id,
             "published": now.isoformat() + 'Z',
             "attributedTo": self.id,
@@ -621,7 +616,6 @@ class Fediverse:
                 "https://www.w3.org/ns/activitystreams#Public",
                 self.followers
             ],
-            "cc": [],
             "directMessage": source.get('directMessage', False),
             "tag": [],
             "attachment": []
@@ -662,9 +656,21 @@ class Fediverse:
             self.symlink(save_path, reply_save_path)
         
         ## Send mentions
-        await self.mention(activity)
+        await self.federate(activity)
         ## Resave with result
         activity['_json'] = self.save(save_path, activity)
+        return activity
+    
+    async def delete_status(self, object_uri):
+        '''
+        Sends Tombstone activity to federated instances.
+        Returns activity dict.
+        '''
+        activity = self.activity(type='Delete', object={
+            'id': object_uri,
+            'type': 'Tombstone'
+        })
+        await self.federate(activity)
         return activity
     
     def sign(self, url, headers):

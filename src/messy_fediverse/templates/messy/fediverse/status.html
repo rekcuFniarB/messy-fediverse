@@ -1,39 +1,51 @@
 {% extends 'messy/fediverse/base.html' %}
+{% load admin_urls %}
 
 {% block main %}
 <article class="messy-fediverse messy-fediverse-status">
     <header>
-        {% if summary %}
-            {% if url %}
-                <a href="{{ url }}" rel="noopener" target="_blank">
+        {% if deleted %}
+            <div>
+                <a href="{% url deleted.meta|admin_urlname:'change' deleted.id %}" class="badge badge-danger" data-uri="{{ deleted.uri }}">Deleted</a>
+            </div>
+        {% endif %}
+        
+        {% if object.summary %}
+            {% if object.url %}
+                <a href="{{ object.url }}" rel="noopener" target="_blank">
             {% endif %}
-                <h2>{{ summary }}</h2>
-            {% if url %}
+                <h2>{{ object.summary }}</h2>
+            {% if object.url %}
                 </a>
             {% endif %}
         {% endif %}
         
-        {% if inReplyTo %}
-            <p><a href="{{ inReplyTo }}" target="_blank">Parent</a></p>
+        {% if object.inReplyTo %}
+            <p><a href="{{ object.inReplyTo }}" target="_blank">Parent</a></p>
         {% endif %}
         
         <p>
-            <a href="{% firstof url id '#' %}">
-                <time datetime="{{ published.isoformat }}">{{ published|date }} {{ published|time }}</time>
+            <a href="{% firstof object.url id '#' %}">
+                <time datetime="{{ object.published.isoformat }}">{{ object.published|date }} {{ object.published|time }}</time>
             </a>
         </p>
         
-        {% if reply_path %}
-            <p><a href="{{ reply_path }}" data-target="#messy-fediverse-status-comments">comments</a></p>
+        {% if object.reply_path %}
+            <p><a href="{{ object.reply_path }}" data-target="#messy-fediverse-status-comments">comments</a></p>
         {% endif %}
     </header>
     
     {# FIXME need to sanitize html somehow #}
     {% autoescape off %}
-    <p>{{ content }}</p>
+    <p>{{ object.content }}</p>
     {% endautoescape %}
     
     {% if request.user.is_staff %}
+        <form action="{% url 'messy-fediverse:status' rpath %}" method="post" data-method="delete">
+            {% csrf_token %}
+            <button type="submit" name="delete" value="{{ activity.id }}">Delete</button>
+        </form>
+    
         <h3>Raw</h3>
         <code><pre>{{ raw_json }}</pre></code>
     {% endif %}

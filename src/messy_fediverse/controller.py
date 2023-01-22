@@ -175,7 +175,7 @@ async def email_notice(request, activity):
                 activity['authorInfo'] = {}
                 try:
                     async with aiohttp.ClientSession() as session:
-                        ap_object['authorInfo'], = await fediverse.gather_http_responses(fediverse.get(attributedTo, session))
+                        activity['authorInfo'], = await fediverse.gather_http_responses(fediverse.get(attributedTo, session))
                 except:
                     pass
             

@@ -506,10 +506,11 @@ class Fediverse:
         if 'object' in activity and type(activity['object']) is dict:
             ## Using some values from object
             for k in ('actor', 'to', 'cc', 'directMessage', 'context', 'conversation'):
-                if k in activity['object']:
+                if k in activity['object'] and k not in activity_upd:
                     activity[k] = activity['object'][k]
             for k in ('to', 'cc', 'actor'):
-                activity['object'][k] = activity[k]
+                if k not in activity_upd:
+                    activity['object'][k] = activity[k]
         
         return activity
     

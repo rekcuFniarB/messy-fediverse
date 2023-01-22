@@ -787,7 +787,7 @@ class Status(View):
         filepath = fediverse.normalize_file_path(f'{request.path.strip("/")}.json')
         
         if not path.isfile(filepath):
-            raise Http404(f'Status {path} not found.')
+            raise Http404(f'Status {rpath} not found.')
         
         data = {}
         with open(filepath, 'rt', encoding='utf-8') as f:
@@ -801,7 +801,14 @@ class Status(View):
         if 'conversation' not in apobject and 'context' not in apobject:
             apobject['context'] = apobject['conversation'] = apobject['id']
         
+        data['deleted'] = False
+        object_uri = f'{proto}://{request.site.domain}{reversepath("status", rpath)}'
+        delActivity = await Activity.objects.filter(object_uri=object_uri, activity_type='DEL', incoming=False, actor_uri=fediverse.id).afirst()
+        
         if is_json_request(request):
+            if delActivity:
+                raise Http404(f'Status {rpath} was deleted.')
+            
             if '@context' not in apobject:
                 apobject['@context'] = fediverse.user.get('@context')
             
@@ -814,32 +821,26 @@ class Status(View):
         
         if is_staff:
             data['raw_json'] = json.dumps(activity, indent=4)
-        elif 'inReplyTo' in apobject and apobject['inReplyTo']:
-            return redirect(apobject['inReplyTo'])
-        elif 'url' in apobject and apobject['url'] and apobject['url'] != apobject['id']:
-            return redirect(apobject['url'])
+            if delActivity:
+                data['deleted'] = {
+                    'id': delActivity.pk,
+                    'uri': delActivity.uri,
+                    'meta': delActivity._meta,
+                    #'url': reverse(f'admin:{delActivity._meta.app_label}_{delActivity._meta.model_name}_change',  args=[delActivity.pk])
+                }
+        else:
+            if delActivity:
+                raise Http404(f'Status {rpath} was deleted.')
+            elif 'inReplyTo' in apobject and apobject['inReplyTo']:
+                return redirect(apobject['inReplyTo'])
+            elif 'url' in apobject and apobject['url'] and apobject['url'] != apobject['id']:
+                return redirect(apobject['url'])
         
         if apobject['context'].startswith(fediverse.id):
             apobject['reply_path'] = reversepath('replies', urlparse(apobject['id']).path)
         
         if 'published' in apobject and apobject['published']:
             apobject['published'] = datetime.fromisoformat(apobject['published'].rstrip('Z'))
-        
-        
-        data['deleted'] = False
-        object_uri = f'{proto}://{request.site.domain}{reversepath("status", rpath)}'
-        delActivity = await Activity.objects.filter(object_uri=object_uri, activity_type='DEL', incoming=False, actor_uri=fediverse.id).afirst()
-        
-        if (delActivity):
-            if not is_staff:
-                raise PermissionDenied('Object was deleted')
-            
-            data['deleted'] = {
-                'id': delActivity.pk,
-                'uri': delActivity.uri,
-                'meta': delActivity._meta,
-                #'url': reverse(f'admin:{delActivity._meta.app_label}_{delActivity._meta.model_name}_change',  args=[delActivity.pk])
-            }
         
         data['activity'] = activity
         data['object'] = apobject

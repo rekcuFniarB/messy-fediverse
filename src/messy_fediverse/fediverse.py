@@ -514,29 +514,19 @@ class Fediverse:
         
         return activity
     
-    async def new_status(self, message, subject='', url=None):
+    async def new_status(self, message, subject='', url=None, replyToObj=None):
         '''
         Create new status.
         message: string message text
+        subject: string subject (optional)
+        url: string custom url (optional)
+        replyToObj: dict AP object if new status is a reply to (optional)
         '''
-        uniqid = self.uniqid()
-        now = datetime.now()
-        datepath = now.date().isoformat().replace('-', '/')
-        status_id = url or path.join(self.id, 'status', datepath, uniqid, '')
-        context = path.join(self.id, 'context', urlparse(status_id).path.strip('/'), '')
         
         data = {
-            'id': status_id,
             'type': "Note",
-            'url': status_id,
-            'published': now.isoformat() + 'Z',
             'attributedTo': self.id,
             'inReplyTo': None,
-            ## FIXME WTF
-            #"context":"tag:mastodon.ml,2022-05-21:objectId=9633346:objectType=Conversation",
-            #"conversation": "tag:mastodon.ml,2022-05-21:objectId=9633346:objectType=Conversation",
-            'context': context,
-            'conversation': context,
             'content': message,
             'source': message,
             'sensitive': False,
@@ -545,108 +535,78 @@ class Fediverse:
             "attachment": []
         }
         
-        parse_result = await self.parse_tags(data['content'])
-        data['content'] = parse_result['content']
-        data['tag'].extend(parse_result['tag'])
-        data['attachment'].extend(parse_result['attachment'])
-        
-        activity = self.activity(object=data)
-        
-        ## Presave, if receiving side wants to check if status exists
-        self.save(data['id'] + '.json', activity)
-        
-        ## Send mentions
-        await self.federate(activity)
-        ## Resave with result
-        activity['_json'] = self.save(data['id'] + '.json', activity)
-        return activity
-    
-    async def reply(self, source, message, subject='', url=None):
-        '''
-        Send "reply" request to remote fediverse server.
-        source: dict, sending source information.
-        message: string
-        Returns string or dict if response was JSON.
-        '''
-        attributedTo = source.get('attributedTo', '')
-        
-        if type(attributedTo) is list:
-            for attr in attributedTo:
-                if type(attr) is dict and 'type' in attr and attr['type'] == 'Person':
-                    attributedTo = attr['id']
-                    break
-        
-        #if not attributedTo:
-        #    raise AttributeError('Source has no "attributedTo" value.')
-        
-        remote_author = None
-        
-        if 'attributedToPerson' in source and type(source['attributedToPerson']) is dict:
-            remote_author = source['attributedToPerson']
-        elif attributedTo:
-            remote_author, = await self.gather_http_responses(self.get(attributedTo))
-        
         uniqid = self.uniqid()
         now = datetime.now()
         datepath = now.date().isoformat().replace('-', '/')
-        status_id = url or path.join(self.id, 'status', datepath, uniqid, '')
-        ## Use context of source if exists
-        #context = path.join(self.id, 'context', urlparse(status_id).path.strip('/'), '')
-        context = source['id']
-        context = source.get('context', source.get('conversation', context))
-        ## Not all engines use context though, for example Misskey not.
-        
-        data = {
-            "id": status_id,
-            "type": "Note",
-            "url": status_id,
-            "published": now.isoformat() + 'Z',
-            "attributedTo": self.id,
-            "inReplyTo": source['id'],
-            ## FIXME WTF
-            #"context":"tag:mastodon.ml,2022-05-21:objectId=9633346:objectType=Conversation",
-            #"conversation": "tag:mastodon.ml,2022-05-21:objectId=9633346:objectType=Conversation",
-            'context': context,
-            'conversation': context,
-            "content": message,
-            "source": message,
-            "sensitive": False,
-            "summary": subject,
-            "to": [
-                source.get('attributedTo', None),
-                "https://www.w3.org/ns/activitystreams#Public",
-                self.followers
-            ],
-            "directMessage": source.get('directMessage', False),
-            "tag": [],
-            "attachment": []
-        }
+        data['id'] = url or path.join(self.id, 'status', datepath, uniqid, '')
+        data['url'] = data['id']
+        data['published'] = now.isoformat() + 'Z'
+        ## Example mastodon context/conversation:
+        #"context":"tag:mastodon.ml,2022-05-21:objectId=9633346:objectType=Conversation",
+        #"conversation": "tag:mastodon.ml,2022-05-21:objectId=9633346:objectType=Conversation",
+        data['context'] = path.join(self.id, 'context', urlparse(data['id']).path.strip('/'), '')
+        data['conversation'] = data['context']
         
         parse_result = await self.parse_tags(data['content'])
         data['content'] = parse_result['content']
         data['tag'].extend(parse_result['tag'])
-        
-        if remote_author:
-            remote_author_url = urlparse(remote_author['id'])
-            
-            originMention = {
-                "href": remote_author.get('url', remote_author.get('id', None)),
-                "name": f"@{remote_author['preferredUsername']}@{remote_author_url.hostname}",
-                "type": "Mention"
-            }
-            ## Appending parent author to mentions if it isn't there yet
-            if (len([x for x in data['tag'] if x.get('href', None) == originMention['href'] or x.get('name', None) == originMention['name']]) == 0):
-                data['tag'].append(originMention)
-        
         data['attachment'].extend(parse_result['attachment'])
-        save_path = f'{data["id"]}.json'
         
         reply_save_path = None
-        if 'context' in data and data['context'].startswith(self.id):
-            reply_save_path = data['context']
-        elif 'conversation' in data and data['conversation'].startswith(self.id):
-            reply_save_path = data['conversation']
+        ## If we are replying to some status
+        if type(replyToObj) is dict:
+            attributedTo = replyToObj.get('attributedTo')
+            
+            if type(attributedTo) is list:
+                for attr in attributedTo:
+                    if type(attr) is dict and 'type' in attr and attr['type'] == 'Person':
+                        attributedTo = attr['id']
+                        break
+            
+            #if not attributedTo:
+            #    raise AttributeError('Source has no "attributedTo" value.')
+            
+            remote_author = None
+            
+            if 'attributedToPerson' in replyToObj and type(replyToObj['attributedToPerson']) is dict:
+                remote_author = replyToObj['attributedToPerson']
+            elif attributedTo:
+                remote_author, = await self.gather_http_responses(self.get(attributedTo))
+            
+            if attributedTo:
+                data['to'] = [
+                    "https://www.w3.org/ns/activitystreams#Public",
+                    attributedTo,
+                    self.followers
+                ]
+            
+            if remote_author:
+                remote_author_url = urlparse(remote_author['id'])
+                
+                originMention = {
+                    "href": remote_author.get('url', remote_author.get('id', None)),
+                    "name": f"@{remote_author['preferredUsername']}@{remote_author_url.hostname}",
+                    "type": "Mention"
+                }
+                ## Appending parent author to mentions if it isn't there yet
+                if (len([x for x in data['tag'] if x.get('href', None) == originMention['href'] or x.get('name', None) == originMention['name']]) == 0):
+                    data['tag'].append(originMention)
+            
+            ## Use context of source if exists
+            #context = path.join(self.id, 'context', urlparse(status_id).path.strip('/'), '')
+            data['context'] = replyToObj.get('context', replyToObj.get('conversation', replyToObj.get('id')))
+            data['conversation'] = data['context']
+            ## Not all engines use context though, for example Misskey not.
+            
+            if 'context' in data and data['context'].startswith(self.id):
+                reply_save_path = data['context']
+            elif 'conversation' in data and data['conversation'].startswith(self.id):
+                reply_save_path = data['conversation']
+            
+            data['inReplyTo'] = replyToObj.get('id')
+            data['directMessage'] = replyToObj.get('directMessage', False)
         
+        save_path = f'{data["id"]}.json'
         activity = self.activity(object=data)
         
         ## Presave, if receiving side wants to check if status exists
@@ -723,6 +683,8 @@ class Fediverse:
             if author_info:
                 activity['authorInfo'] = author_info
         
+        activity['_save_reply'] = True
+        
         savepath = path.join(inReplyTo.path, f'{self.uniqid()}.reply.json')
         self.save(savepath, activity)
         return savepath
@@ -745,7 +707,7 @@ class Fediverse:
             if apobject['type'] == 'Note':
                 ## If we've received a reply message
                 if apobject.get('inReplyTo', None):
-                    result = await self.save_reply(apobject)
+                    result = await self.save_reply(activity)
         
         return result
     

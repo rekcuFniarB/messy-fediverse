@@ -956,27 +956,27 @@ class Interact(View):
     
     async def post(self, request):
         form = InteractForm(request.POST)
-        data = {}
+        data = None
         result = None
         form_is_valid = form.is_valid()
-        fediverse = fediverse_factory(request)
-        
-        if 'link' in form.cleaned_data and form.cleaned_data['link']:
-            async with aiohttp.ClientSession() as session:
-                data, = await fediverse.gather_http_responses(fediverse.get(form.cleaned_data['link'], session=session))
-            #data = cache.get(form.cleaned_data['link'], sentinel)
-            if data is sentinel:
-                raise BadRequest(f'Object "{form.cleaned_data["link"]}" has been lost, try again.')
         
         if form_is_valid:
             ## do processing
             fediverse = fediverse_factory(request)
             async with aiohttp.ClientSession() as session:
                 await fediverse.http_session(session)
+                
+                ## If we are replying
+                if 'link' in form.cleaned_data and form.cleaned_data['link']:
+                    data, = await fediverse.gather_http_responses(fediverse.get(form.cleaned_data['link'], session=session))
+                    #data = cache.get(form.cleaned_data['link'], sentinel)
+                    if data is sentinel:
+                        raise BadRequest(f'Object "{form.cleaned_data["link"]}" has been lost, try again.')
+                
                 if data:
                     if 'type' in data and data['type'] == 'Person':
                         #and form.cleaned_data['reply_direct']:
-                        ## It'a a direct message
+                        ## It'a a direct message FIXME
                         person_to_reply = data
                         ## Preparing source
                         data = {
@@ -988,19 +988,13 @@ class Interact(View):
                         data['directMessage'] = True
                     if form.cleaned_data['context']:
                         data['context'] = form.cleaned_data['context']
-                    
-                    result = await fediverse.reply(
-                        data,
-                        form.cleaned_data['content'],
-                        form.cleaned_data['subject'],
-                        form.cleaned_data['custom_url']
-                    )
-                else:
-                    result = await fediverse.new_status(
-                        form.cleaned_data['content'],
-                        form.cleaned_data['subject'],
-                        form.cleaned_data['custom_url']
-                    )
+                
+                result = await fediverse.new_status(
+                    message=form.cleaned_data['content'],
+                    subject=form.cleaned_data['subject'],
+                    url=form.cleaned_data['custom_url'],
+                    replyToObj=data
+                )
             
             if result:
                 ## FIXME This became a little bit messy
@@ -1012,7 +1006,6 @@ class Interact(View):
                     redirect_path = reversepath('replies', redirect_path)
                 
                 await save_activity(request, result)
-                
                 return redirect(redirect_path)
         
         data['form'] = form

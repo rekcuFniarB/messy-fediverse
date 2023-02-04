@@ -858,6 +858,7 @@ class Status(View):
         fediverse = fediverse_factory(request)
         async with aiohttp.ClientSession() as session:
             await fediverse.http_session(session)
+            ## FIXME should also send requests to mentioned instances
             activity = await fediverse.delete_status(object_uri)
             await save_activity(request, activity)
         

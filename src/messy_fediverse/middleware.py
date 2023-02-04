@@ -1,7 +1,8 @@
 import syslog
 from django.http import JsonResponse
 from django.core.exceptions import PermissionDenied #, BadRequest
-from .controller import fediverse_factory, root_json, request_user_is_staff
+from .controller import fediverse_factory, root_json, request_user_is_staff, ActivityResponse
+from .models import Activity
 from django.conf import settings
 from django.urls import resolve, reverse
 from OpenSSL import crypto
@@ -99,17 +100,25 @@ class WrapIntoStatus:
                 ## Show user info
                 response = root_json(request)
             else:
+                proto = 'http'
+                if request.is_secure():
+                    proto = 'https'
+                
+                title = f'{proto}://{request.site.domain}{request.path}'
+                
+                activity = Activity.objects.filter(object_uri=title, activity_type='CRE', incoming=False).first()
+                if activity:
+                    activity = activity.get_dict();
+                    if 'object' in activity and type(activity['object']) is dict:
+                        activity['object']['@context'] = activity.get('@context')
+                        return ActivityResponse(activity['object'], request)
+                
                 ## making status
                 timesearch = self.timeregex.search(response.content)
                 if timesearch:
                     timestring = timesearch.group(1).decode('utf-8', errors='replace')
                 timestring = datetime.utcfromtimestamp(datetime.fromisoformat(timestring).timestamp()).isoformat() + 'Z'
                 
-                proto = 'http'
-                if request.is_secure():
-                    proto = 'https'
-                
-                title = f'{proto}://{request.site.domain}{request.path}'
                 titlesearch = self.titleregex.search(response.content)
                 if titlesearch:
                     title = titlesearch.group(1).decode('utf-8', errors='replace')
@@ -122,7 +131,7 @@ class WrapIntoStatus:
                     '@context': [
                         "https://www.w3.org/ns/activitystreams",
                         #staticurl(request, 'social/litepub.json'),
-                        "https://litepub.social/litepub/litepub-v0.1.jsonld",
+                        "https://cloudflare-ipfs.com/ipfs/QmUt2rFamEsBxSkUd7DwE7SXr5BVxTQviGMH6Hwj9bKzTE/litepub-0.1.jsonld",
                         {"@language": "und"}
                     ],
                     'id': f'{proto}://{request.site.domain}{request.path}',
@@ -139,7 +148,8 @@ class WrapIntoStatus:
                     'senstive': None,
                     'summary': None,
                     'to': [
-                        'https://www.w3.org/ns/activitystreams#Public'
+                        'https://www.w3.org/ns/activitystreams#Public',
+                        fediverse.followers
                     ],
                     'cc': [],
                     'tag': [],
@@ -155,7 +165,7 @@ class WrapIntoStatus:
                        }
                     }
                 }
-                response = JsonResponse(data, content_type='application/activity+json')
+                response = ActivityResponse(data, request)
         
         return response
 

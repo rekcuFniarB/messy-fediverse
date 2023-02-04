@@ -339,6 +339,8 @@ class Fediverse:
             'txt':  'text/plain'
         }
         
+        links = html.TagA.findall(content)
+        
         for word in words:
             word = word.strip('@# \n\t')
             if word.startswith('https://') or word.startswith('http://'):
@@ -350,9 +352,10 @@ class Fediverse:
                 if word not in userids:
                     userids.append(word)
         
-        links = html.TagA.findall(content)
-        
         for link in links:
+            if type(link) is str:
+                ## TODO need to improve hashtags parsing
+                link = html.TagA(attr_href=link, name=link)
             url = urlparse(link.attr_href)
             basename = path.basename(url.path.strip('/'))
             if basename:
@@ -514,13 +517,14 @@ class Fediverse:
         
         return activity
     
-    async def new_status(self, message, subject='', url=None, replyToObj=None):
+    async def new_status(self, message, subject='', url=None, replyToObj=None, tags=None):
         '''
         Create new status.
         message: string message text
         subject: string subject (optional)
         url: string custom url (optional)
         replyToObj: dict AP object if new status is a reply to (optional)
+        tags: string, space separated list of tags (hashtags or users to mention)
         '''
         
         data = {
@@ -547,10 +551,21 @@ class Fediverse:
         data['context'] = path.join(self.id, 'context', urlparse(data['id']).path.strip('/'), '')
         data['conversation'] = data['context']
         
-        parse_result = await self.parse_tags(data['content'])
-        data['content'] = parse_result['content']
-        data['tag'].extend(parse_result['tag'])
-        data['attachment'].extend(parse_result['attachment'])
+        tasks = [self.parse_tags(data['content'])]
+        if tags:
+            tasks.append(self.parse_tags(tags))
+        
+        parse_results = await asyncio.gather(*tasks, return_exceptions=True)
+        if type(parse_results[0]) is dict:
+            data['content'] = parse_results[0].get('content')
+        for parse_result in parse_results:
+            if type(parse_result) is dict:
+                for tag in parse_result.get('tag', []):
+                    if tag not in data['tag']:
+                        data['tag'].append(tag)
+                for tag in parse_result.get('attachment', []):
+                    if tag not in data['attachment']:
+                        data['attachment'].append(tag)
         
         reply_save_path = None
         ## If we are replying to some status

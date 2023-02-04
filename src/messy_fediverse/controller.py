@@ -991,8 +991,9 @@ class Interact(View):
                 
                 result = await fediverse.new_status(
                     message=form.cleaned_data['content'],
-                    subject=form.cleaned_data['subject'],
-                    url=form.cleaned_data['custom_url'],
+                    subject=form.cleaned_data.get('subject'),
+                    url=form.cleaned_data.get('custom_url'),
+                    tags=form.cleaned_data.get('tags'),
                     replyToObj=data
                 )
             

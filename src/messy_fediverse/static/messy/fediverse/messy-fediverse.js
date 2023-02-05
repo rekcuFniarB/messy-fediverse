@@ -119,7 +119,8 @@
                     event.preventDefault();
                     var form = this.querySelector('form');
                     var requestParams = {
-                        id: comment.dataset.localId
+                        id: comment.dataset.localId,
+                        uri: comment.dataset.uri
                     }
                     // First hidden input
                     csrf = form.querySelector('input[type="hidden"]');

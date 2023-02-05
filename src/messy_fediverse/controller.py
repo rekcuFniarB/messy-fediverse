@@ -500,14 +500,19 @@ class Replies(View):
     def parent_uri(self, request, rpath):
         rpath = rpath.strip('/')
         proto = request_protocol(request)
-        request_query_string = request.META.get('QUERY_STRING', '')
-        if request_query_string:
-            request_query_string = f'?{request_query_string}'
+        # request_query_string = request.META.get('QUERY_STRING', '')
+        # if request_query_string:
+        #     request_query_string = f'?{request_query_string}'
+        request_query_string = ''
         #return f"{proto}://{request.site.domain}{reversepath('replies', rpath)}{request_query_string}"
         return f"{proto}://{request.site.domain}/{rpath}/{request_query_string}"
     
     @sync_to_async
     def render_page(self, request, rpath, data_update={}):
+        ## Have to use sync_to_async
+        ## due to 'request.user.is_staff' is used in the template
+        ## and in async mode an error occurs:
+        ##      You cannot call this from an async context - use a thread or sync_to_async.
         data = {
             'parent_uri': self.parent_uri(request, rpath),
             'rpath': rpath
@@ -532,6 +537,9 @@ class Replies(View):
         
         items = Activity.objects.filter(context=context, disabled=False)
         async for item in items:
+            if item.object_uri == context:
+                continue
+            
             if content:
                 replies.append(item.get_dict())
             else:
@@ -544,9 +552,6 @@ class Replies(View):
     async def get(self, request, rpath):
         rpath = rpath.strip('/')
         proto = request_protocol(request)
-        request_query_string = request.META.get('QUERY_STRING', '')
-        if request_query_string:
-            request_query_string = f'?{request_query_string}'
         
         content = 'content' in request.GET
         fediverse = fediverse_factory(request)
@@ -576,18 +581,23 @@ class Replies(View):
             context_root_url = reversepath('dumb', 'context').rstrip('/')
             context = None
             
-            for item in data['items']:
-                if not data['summary'] and 'summary' in item and item['summary']:
-                    data['summary'] = item['summary']
+            for n, apobject in enumerate(data['items']):
+                if 'object' in apobject and type(apobject['object']) is dict:
+                    ## apobject is actually an activity
+                    apobject.update(apobject['object'])
+                    data['items'][n] = apobject
                 
-                if item['published']:
-                    item['published'] = datetime.fromisoformat(item['published'].rstrip('Z'))
+                if not data['summary'] and 'summary' in apobject and apobject['summary']:
+                    data['summary'] = apobject['summary']
+                
+                if apobject['published']:
+                    apobject['published'] = datetime.fromisoformat(apobject['published'].rstrip('Z'))
                 
                 if not context:
-                    if 'context' in item and item['context'].startswith(fediverse.id):
-                        context = item['context']
-                    elif 'conversation' in item and item['conversation'].startswith(fediverse.id):
-                        context = item['conversation']
+                    if 'context' in apobject and apobject['context'].startswith(fediverse.id):
+                        context = apobject['context']
+                    elif 'conversation' in apobject and apobject['conversation'].startswith(fediverse.id):
+                        context = apobject['conversation']
             
             if context:
                 data['parent_path'] = '/' + urlparse(context).path.replace(context_root_url, '', 1).lstrip('/')
@@ -657,15 +667,25 @@ class Replies(View):
             raise PermissionDenied
         
         fediverse = fediverse_factory(request)
-        id = request.GET.get('id', None)
+        object_id = request.GET.get('id')
+        object_uri = request.GET.get('uri')
         result = {'success': False}
-        if not id:
-            result['error'] = 'ID required'
-        else:
-            try:
-                fediverse.delete_reply(id)
+        activity = None
+        
+        try:
+            if object_uri:
+                activity = await Activity.objects.filter(object_uri=object_uri).afirst()
+            if activity:
+                activity.disabled = True
+                await sync_to_async(activity.save)()
                 result['success'] = True
-            except BaseException as error:
+            elif object_id:
+                ## Old version fallback
+                fediverse.delete_reply(object_id)
+                result['success'] = True
+            else:
+                result['error'] = 'ID required'
+        except BaseException as error:
                 result['error'] = '\n'.join(error.args)
         
         return JsonResponse(result)
@@ -807,17 +827,25 @@ def webfinger(request):
 class Status(View):
     async def get(self, request, rpath):
         proto = request_protocol(request)
-        fediverse = fediverse_factory(request)
-        filepath = fediverse.normalize_file_path(f'{request.path.strip("/")}.json')
-        
-        if not path.isfile(filepath):
-            raise Http404(f'Status {rpath} not found.')
-        
+        object_uri = f'{proto}://{request.site.domain}{reversepath("status", rpath)}'
         data = {}
-        with open(filepath, 'rt', encoding='utf-8') as f:
-            apobject = json.load(f)
+        activity = await Activity.objects.filter(object_uri=object_uri, disabled=False).afirst()
         
-        activity = apobject
+        fediverse = fediverse_factory(request)
+        
+        if not activity:
+            filepath = fediverse.normalize_file_path(f'{request.path.strip("/")}.json')
+            
+            if not path.isfile(filepath):
+                raise Http404(f'Status {rpath} not found.')
+            
+            with open(filepath, 'rt', encoding='utf-8') as f:
+                activity = json.load(f)
+        else:
+            ## Got object from model
+            activity = activity.get_dict()
+        
+        apobject = activity
         
         if 'object' in activity and type(activity['object']) is dict:
             apobject = activity['object']

@@ -125,8 +125,6 @@ class WrapIntoStatus:
                 if titlesearch:
                     title = titlesearch.group(1).decode('utf-8', errors='replace')
                 
-                context_path = reverse('messy-fediverse:dumb', kwargs={'rpath': f'context/{request.path.strip("/")}'})
-                
                 fediverse = fediverse_factory(request)
                 
                 data = {
@@ -143,8 +141,6 @@ class WrapIntoStatus:
                     "published": timestring,
                     "attributedTo": f'{proto}://{request.site.domain}{reverse("messy-fediverse:root")}',
                     'inReplyTo': None,
-                    'context': f'{proto}://{request.site.domain}{context_path}',
-                    'conversation': f'{proto}://{request.site.domain}{context_path}',
                     'content': f'<a href="{proto}://{request.site.domain}{request.path}">{title}</a>',
                     #'source': '',
                     'senstive': None,
@@ -158,6 +154,11 @@ class WrapIntoStatus:
                     'attachment': [],
                     'replies': f'{proto}://{request.site.domain}{reverse("messy-fediverse:replies", kwargs={"rpath": request.path.strip("/")})}'
                 }
+                
+                # context_path = reverse('messy-fediverse:dumb', kwargs={'rpath': f'context/{request.path.strip("/")}'})
+                #data['context'] = data['conversation'] = f'{proto}://{request.site.domain}{context_path}'
+                data['context'] = data['conversation'] = data['id']
+                
                 response = ActivityResponse(data, request)
         
         return response

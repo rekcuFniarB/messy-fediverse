@@ -50,27 +50,40 @@ class Activity(models.Model):
     disabled = models.BooleanField('Disabled', default=False, null=False)
     
     def get_dict(self):
-        data = None
+        activity = None
         
         if self.self_json.name:
             try:
                 self.self_json.seek(0)
-                data = json.loads(self.self_json.read().decode('utf-8'))
-                data['_static'] = True
+                activity = json.loads(self.self_json.read().decode('utf-8'))
+                activity['_static'] = True
             except:
                 pass
         
-        if not data:
-            data = {
+        if not activity:
+            activity = {
                 "@context": "https://www.w3.org/ns/activitystreams",
-                "id": self.uri,
-                "type": self.activity_type,
-                "actor": self.actor_uri,
-                "object": self.object_uri,
                 "_static": False
             }
-
-        return data
+        
+        ## Updating dict values from DB
+        if self.uri:
+            activity['id'] = self.uri
+        if self.activity_type:
+            activity['type'] = dict(Activity.TYPES).get(self.activity_type, '')
+        if self.actor_uri:
+            activity['actor'] = self.actor_uri
+        if self.object_uri:
+            if 'object' in activity and type(activity['object']) is dict:
+                activity['object']['id'] = self.object_uri
+            else:
+                activity['object'] = self.object_uri
+        
+        if 'object' in activity and type(activity['object']) is dict:
+            if self.context:
+                activity['object']['context'] = activity['object']['conversation'] = self.context
+        
+        return activity
     
     def __str__(self):
         action = dict(Activity.TYPES).get(self.activity_type, '')

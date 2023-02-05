@@ -685,20 +685,20 @@ class Inbox(View):
             fediverse = fediverse_factory(request)
             async with aiohttp.ClientSession() as session:
                 await fediverse.http_session(session)
-                ## If activity with object
-                if 'object' in data and type(data['object']) is dict:
-                    data['object']['requestMeta'] = {}
-                    for k in request.META:
-                        if k.startswith('HTTP_'):
-                            data['requestMeta'][k] = request.META[k]
-                    
-                    # result = await fediverse.process_object(data)
-                    # data['_json'] = result
-                    if 'actor' in data and 'authorInfo' not in data and 'authorInfo' not in data['object']:
-                        data['authorInfo'], = await fediverse.gather_http_responses(fediverse.get(data['actor'], session))
-                    
-                    await email_notice(request, data)
-                    should_log_request = False
+                
+                if 'requestMeta' not in data:
+                    data['requestMeta'] = {}
+                for k in request.META:
+                    if k.startswith('HTTP_'):
+                        data['requestMeta'][k] = request.META[k]
+                
+                # result = await fediverse.process_object(data)
+                # data['_json'] = result
+                if 'actor' in data and 'authorInfo' not in data and 'authorInfo' not in data.get('object', {}):
+                    data['authorInfo'], = await fediverse.gather_http_responses(fediverse.get(data['actor'], session))
+                
+                await email_notice(request, data)
+                should_log_request = False
                 
                 saveResult = await save_activity(request, data)
                 

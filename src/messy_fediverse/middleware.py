@@ -111,6 +111,8 @@ class WrapIntoStatus:
                     activity = activity.get_dict();
                     if 'object' in activity and type(activity['object']) is dict:
                         activity['object']['@context'] = activity.get('@context')
+                        if 'replies' not in activity['object']:
+                            activity['object']['replies'] = f'{proto}://{request.site.domain}{reverse("messy-fediverse:replies", kwargs={"rpath": request.path.strip("/")})}'
                         return ActivityResponse(activity['object'], request)
                 
                 ## making status

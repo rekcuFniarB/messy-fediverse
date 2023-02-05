@@ -400,7 +400,7 @@ async def save_activity(request, activity):
                 activity_type = actType,
                 actor_uri = activity.get('actor', None),
                 object_uri = object_id,
-                context = apobject.get('context', apobject.get('conversation', activity.get('context', activity.get('conversation', apobject.get('id'))))),
+                context = apobject.get('context', apobject.get('conversation', activity.get('context', activity.get('conversation', apobject.get('id', ''))))),
                 incoming = incoming
             )
             

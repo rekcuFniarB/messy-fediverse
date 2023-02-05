@@ -400,6 +400,7 @@ async def save_activity(request, activity):
                 activity_type = actType,
                 actor_uri = activity.get('actor', None),
                 object_uri = object_id,
+                context = apobject.get('context', apobject.get('conversation', activity.get('context', activity.get('conversation', apobject.get('id'))))),
                 incoming = incoming
             )
             
@@ -497,6 +498,7 @@ def featured(request, *args, **kwargs):
 
 class Replies(View):
     def parent_uri(self, request, rpath):
+        rpath = rpath.strip('/')
         proto = request_protocol(request)
         request_query_string = request.META.get('QUERY_STRING', '')
         if request_query_string:
@@ -518,6 +520,27 @@ class Replies(View):
             data
         )
     
+    async def get_replies(self, request, rpath, content=False):
+        rpath = rpath.strip('/')
+        replies = []
+        if not rpath.startswith('http://') and not rpath.startswith('https://'):
+            ## legacy method
+            replies = await fediverse_factory(request).get_replies(rpath, content=content)
+            context = self.parent_uri(request, rpath)
+        else:
+            context = rpath
+        
+        items = Activity.objects.filter(context=context, disabled=False)
+        async for item in items:
+            if content:
+                replies.append(item.get_dict())
+            else:
+                replies.append(item.object_uri)
+            
+            replies.extend(await self.get_replies(request, item.object_uri, content))
+        
+        return replies
+    
     async def get(self, request, rpath):
         rpath = rpath.strip('/')
         proto = request_protocol(request)
@@ -531,11 +554,12 @@ class Replies(View):
         if is_json_request(request):
             async with aiohttp.ClientSession() as session:
                 await fediverse.http_session(session)
-                items = await fediverse.get_replies(rpath, content=content)
+                # items = await fediverse.get_replies(rpath, content=content)
+                items = await self.get_replies(request, rpath, content=content)
             
             return ActivityResponse({
                 '@context': "https://www.w3.org/ns/activitystreams",
-                'id': self.parent_uri(request, rpath),
+                'id': f"{proto}://{request.site.domain}{reversepath('replies', rpath)}",
                 'type': 'CollectionPage',
                 'partOf': f"{proto}://{request.site.domain}{reversepath('replies', rpath)}",
                 'items': items
@@ -544,7 +568,7 @@ class Replies(View):
             async with aiohttp.ClientSession() as session:
                 await fediverse.http_session(session)
                 data = {
-                    'items': await fediverse.get_replies(rpath, content=True),
+                    'items': await self.get_replies(request, rpath, content=True),
                     'form': ReplyForm(),
                     'summary': ''
                 }
@@ -622,7 +646,7 @@ class Replies(View):
             else:
                 async with aiohttp.ClientSession() as session:
                     await fediverse.http_session(session)
-                    items = await fediverse_factory(request).get_replies(rpath, content=True)
+                    items = await self.get_replies(request, rpath, content=True)
                 return await self.render_page(request, rpath, {'items': items, 'form': form})
     
         else:
@@ -666,10 +690,10 @@ class Inbox(View):
                     data['object']['requestMeta'] = {}
                     for k in request.META:
                         if k.startswith('HTTP_'):
-                            data['object']['requestMeta'][k] = request.META[k]
+                            data['requestMeta'][k] = request.META[k]
                     
-                    result = await fediverse.process_object(data)
-                    data['_json'] = result
+                    # result = await fediverse.process_object(data)
+                    # data['_json'] = result
                     if 'actor' in data and 'authorInfo' not in data and 'authorInfo' not in data['object']:
                         data['authorInfo'], = await fediverse.gather_http_responses(fediverse.get(data['actor'], session))
                     

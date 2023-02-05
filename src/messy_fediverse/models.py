@@ -44,8 +44,10 @@ class Activity(models.Model):
     activity_type = models.CharField('Type', choices=TYPES, max_length=3, null=False, default='', blank=True)
     actor_uri = models.URLField('Actor URI', null=False, default='', blank=True)
     object_uri = models.URLField('Object URI', null=False, default='', blank=True)
+    context = models.CharField('Context', null=False, default='', blank=True, max_length=255)
     self_json = models.FileField('Raw JSON', upload_to=get_upload_path, null=True)
     incoming = models.BooleanField('Is incoming', default=False, null=False)
+    disabled = models.BooleanField('Disabled', default=False, null=False)
     
     def get_dict(self):
         data = None
@@ -73,7 +75,7 @@ class Activity(models.Model):
     def __str__(self):
         action = dict(Activity.TYPES).get(self.activity_type, '')
         ts = self.ts.strftime('%Y-%m-%d %H:%M:%S')
-        return f'{self.uri} {action} {ts}'
+        return f'{ts} {action} {self.uri}'
     
 class Follower(models.Model):
     uri = models.URLField('Actor URI', unique=True, null=False)

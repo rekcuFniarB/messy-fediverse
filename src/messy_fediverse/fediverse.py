@@ -548,8 +548,7 @@ class Fediverse:
         ## Example mastodon context/conversation:
         #"context":"tag:mastodon.ml,2022-05-21:objectId=9633346:objectType=Conversation",
         #"conversation": "tag:mastodon.ml,2022-05-21:objectId=9633346:objectType=Conversation",
-        data['context'] = path.join(self.id, 'context', urlparse(data['id']).path.strip('/'), '')
-        data['conversation'] = data['context']
+        data['context'] = data['conversation'] = data['id']
         
         tasks = [self.parse_tags(data['content'])]
         if tags:
@@ -625,16 +624,16 @@ class Fediverse:
         activity = self.activity(object=data)
         
         ## Presave, if receiving side wants to check if status exists
-        self.save(save_path, activity)
+        # self.save(save_path, activity)
         
-        if reply_save_path:
-            reply_save_path = path.join(reply_save_path, path.basename(data['id'].strip('/')) + '.reply.json')
-            self.symlink(save_path, reply_save_path)
+        # if reply_save_path:
+        #     reply_save_path = path.join(reply_save_path, path.basename(data['id'].strip('/')) + '.reply.json')
+        #     self.symlink(save_path, reply_save_path)
         
         ## Send mentions
         await self.federate(activity)
         ## Resave with result
-        activity['_json'] = self.save(save_path, activity)
+        # activity['_json'] = self.save(save_path, activity)
         return activity
     
     async def delete_status(self, object_uri):
@@ -642,6 +641,9 @@ class Fediverse:
         Sends Tombstone activity to federated instances.
         Returns activity dict.
         '''
+        ## FIXME also send to mentioned users
+        ## at this time they don't receive this activity if they
+        ## don't follow us.
         activity = self.activity(type='Delete', object={
             'id': object_uri,
             'type': 'Tombstone'
@@ -722,7 +724,8 @@ class Fediverse:
             if apobject['type'] == 'Note':
                 ## If we've received a reply message
                 if apobject.get('inReplyTo', None):
-                    result = await self.save_reply(activity)
+                    #result = await self.save_reply(activity)
+                    pass
         
         return result
     

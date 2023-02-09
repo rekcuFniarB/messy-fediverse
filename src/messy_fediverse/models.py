@@ -103,7 +103,7 @@ class Activity(models.Model):
             activity_type='CRE',
             actor_uri=fediverseUser.id,
             incoming=False,
-            context=object_uri
+            # context=object_uri
         )
         activity = None
         async for item in objects:

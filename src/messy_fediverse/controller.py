@@ -829,9 +829,8 @@ class Status(View):
         proto = request_protocol(request)
         object_uri = f'{proto}://{request.site.domain}{reversepath("status", rpath)}'
         data = {}
-        activity = await Activity.objects.filter(object_uri=object_uri, disabled=False).afirst()
-        
         fediverse = fediverse_factory(request)
+        activity = await Activity.get_note_activity(object_uri, fediverse)
         
         if not activity:
             filepath = fediverse.normalize_file_path(f'{request.path.strip("/")}.json')

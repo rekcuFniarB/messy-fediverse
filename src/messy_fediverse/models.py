@@ -50,6 +50,10 @@ class Activity(models.Model):
     disabled = models.BooleanField('Disabled', default=False, null=False)
     
     def get_dict(self):
+        '''
+        Get activity dict.
+        FIXME: make it async
+        '''
         activity = None
         
         if self.self_json.name:
@@ -83,6 +87,31 @@ class Activity(models.Model):
             if self.context:
                 activity['object']['context'] = activity['object']['conversation'] = self.context
         
+        return activity
+    
+    @classmethod
+    async def get_note_activity(cls, object_uri, fediverseUser):
+        '''
+        Get "None" activity by object_uri.
+        object_uri: string object URI
+        fedierseUser: object, Fediverse instance.
+        Returns Activity instance.
+        '''
+        objects = cls.objects.filter(
+            object_uri=object_uri,
+            disabled=False,
+            activity_type='CRE',
+            actor_uri=fediverseUser.id,
+            incoming=False,
+            context=object_uri
+        )
+        activity = None
+        async for item in objects:
+            activityDict = item.get_dict()
+            if 'object' in activityDict and type(activityDict['object']) is dict:
+                if activityDict['object'].get('type') == 'Note':
+                    activity = item
+                    break
         return activity
     
     def __str__(self):

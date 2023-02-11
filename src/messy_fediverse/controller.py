@@ -115,6 +115,7 @@ async def log_request(request, data=None, force=False):
 
 async def email_notice(request, activity):
     ap_object = activity.get('object', {})
+    fediverse = fediverse_factory(request)
     
     if (
         type(ap_object) is str and
@@ -128,7 +129,6 @@ async def email_notice(request, activity):
             ap_object, = await fediverse.gather_http_responses(fediverse.get(ap_object, session))
     
     if 'type' in ap_object:
-        fediverse = fediverse_factory(request)
         subj_parts = ['Fediverse', ap_object['type']]
         summary = ap_object.get('summary', None)
         if summary:
@@ -504,7 +504,7 @@ class Replies(View):
                 continue
             
             if content:
-                replies.append(item.get_dict())
+                replies.append(await item.get_dict())
             else:
                 replies.append(item.object_uri)
             
@@ -699,7 +699,7 @@ class Inbox(View):
         
         responseData['success'] = bool(saveResult)
         if saveResult:
-            responseData['activity'] = saveResult.get_dict()
+            responseData['activity'] = await saveResult.get_dict()
         
         return JsonResponse(responseData)
 
@@ -805,7 +805,7 @@ class Status(View):
                 activity = json.load(f)
         else:
             ## Got object from model
-            activity = activity.get_dict()
+            activity = await activity.get_dict()
         
         apobject = activity
         
@@ -864,16 +864,25 @@ class Status(View):
         #raise Http404(f'Status {path} not found.')
     
     async def delete(self, request, rpath):
+        '''
+        Sends "delete" activity to federated network.
+        '''
         if not await request_user_is_staff(request):
             raise PermissionDenied
         
         proto = request_protocol(request)
         object_uri = f'{proto}://{request.site.domain}{reversepath("status", rpath)}'
         fediverse = fediverse_factory(request)
+        activity = await Activity.get_note_activity(object_uri, fediverse)
+        if not activity:
+            return JsonResponse({'alert': f'Activity for {object_uri} not found'}, status_code=404)
+        
+        activity = await activity.get_dict()
+        
         async with aiohttp.ClientSession() as session:
             await fediverse.http_session(session)
             ## FIXME should also send requests to mentioned instances
-            activity = await fediverse.delete_status(object_uri)
+            activity = await fediverse.delete_status(activity)
             await save_activity(request, activity)
         
         # return redirect(reversepath('status', rpath))

@@ -636,18 +636,17 @@ class Fediverse:
         # activity['_json'] = self.save(save_path, activity)
         return activity
     
-    async def delete_status(self, object_uri):
+    async def delete_status(self, activity):
         '''
         Sends Tombstone activity to federated instances.
         Returns activity dict.
         '''
-        ## FIXME also send to mentioned users
-        ## at this time they don't receive this activity if they
-        ## don't follow us.
-        activity = self.activity(type='Delete', object={
-            'id': object_uri,
-            'type': 'Tombstone'
-        })
+        ## FIXME we get "401 unauthorized" response from mastodons.
+        apobject = activity.get('object', {});
+        if type(apobject) is dict:
+            apobject['type'] = 'Tombstone'
+        
+        activity = self.activity(type='Delete', object=apobject)
         await self.federate(activity)
         return activity
     

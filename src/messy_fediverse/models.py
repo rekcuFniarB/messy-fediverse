@@ -3,6 +3,7 @@ from django.conf import settings
 from os import path
 import json
 from datetime import datetime
+from asgiref.sync import sync_to_async
 
 def get_upload_path(self, filename):
     '''
@@ -49,6 +50,7 @@ class Activity(models.Model):
     incoming = models.BooleanField('Is incoming', default=False, null=False)
     disabled = models.BooleanField('Disabled', default=False, null=False)
     
+    @sync_to_async
     def get_dict(self):
         '''
         Get activity dict.
@@ -107,7 +109,7 @@ class Activity(models.Model):
         )
         activity = None
         async for item in objects.aiterator():
-            activityDict = item.get_dict()
+            activityDict = await item.get_dict()
             if 'object' in activityDict and type(activityDict['object']) is dict:
                 if activityDict['object'].get('type') == 'Note':
                     activity = item

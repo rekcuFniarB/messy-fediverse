@@ -99,7 +99,7 @@ class WrapIntoStatus:
             
             if home:
                 ## Show user info
-                response = root_json(request)
+                response = async_to_sync(root_json)(request)
             else:
                 proto = 'http'
                 if request.is_secure():

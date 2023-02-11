@@ -129,7 +129,7 @@ async def email_notice(request, activity):
             ap_object, = await fediverse.gather_http_responses(fediverse.get(ap_object, session))
     
     if 'type' in ap_object:
-        subj_parts = ['Fediverse', ap_object['type']]
+        subj_parts = ['Fediverse', activity.get('type', ''), ap_object['type']]
         summary = ap_object.get('summary', None)
         if summary:
             subj_parts.append(summary)

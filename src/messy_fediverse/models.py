@@ -106,7 +106,7 @@ class Activity(models.Model):
             # context=object_uri
         )
         activity = None
-        async for item in objects:
+        async for item in objects.aiterator():
             activityDict = item.get_dict()
             if 'object' in activityDict and type(activityDict['object']) is dict:
                 if activityDict['object'].get('type') == 'Note':

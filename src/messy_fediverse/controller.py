@@ -107,62 +107,26 @@ def request_protocol(request):
         proto = 'https'
     return proto
 
-async def log_request(request, data=None):
-    if settings.MESSY_FEDIVERSE.get('LOG_REQUESTS_TO_MAIL', False) and request.method == 'POST':
-        subject=f'SOCIAL {request.method} REQUEST: {request.path}'
-        body = None
-        fediverse = fediverse_factory(request)
-        content = ''
-        
-        if data:
-            user_host = ''
-            if 'authorInfo' in data and 'user@host' in data['authorInfo']:
-                user_host = data['authorInfo']['user@host']
-            
-            subject = f'Fediverse {data["type"]} {user_host}'
-            body = json.dumps(data, indent=4)
-            body = f'<code><pre>{body}</pre></code>'
-            
-            apobject = data.get('object', None)
-            
-            if (
-                type(apobject) is str and
-                (
-                    apobject.startswith('http://') or
-                    apobject.startswith('https://')
-                )
-            ):
-                ## Trying to get object content
-                async with aiohttp.ClientSession() as session:
-                    apobject, = await fediverse.gather_http_responses(fediverse.get(apobject, session))
-            
-            if type(apobject) is dict:
-                content = apobject.get('content', '')
-        
-        if not body:
-            body = request.body.decode('utf-8', 'replace')
-        
-        message = f'''{content}<br><br>
-            GET: {request.META['QUERY_STRING']}
-            <br>
-            POST: {request.POST.__str__()}
-            <br>
-            BODY:{body}
-            <br>
-            META: {request.META.__str__()}
-        '''
-        
-        return mail_admins(
-            subject=subject,
-            fail_silently=not settings.DEBUG,
-            message=strip_tags(message),
-            html_message=message
-        )
+async def log_request(request, data=None, force=False):
+    if force or (settings.MESSY_FEDIVERSE.get('LOG_REQUESTS_TO_MAIL', False) and request.method == 'POST'):
+        return await email_notice(request, data)
     else:
         return False
 
 async def email_notice(request, activity):
     ap_object = activity.get('object', {})
+    
+    if (
+        type(ap_object) is str and
+        (
+            ap_object.startswith('http://') or
+            ap_object.startswith('https://')
+        )
+    ):
+        ## Trying to get object content
+        async with aiohttp.ClientSession() as session:
+            ap_object, = await fediverse.gather_http_responses(fediverse.get(ap_object, session))
+    
     if 'type' in ap_object:
         fediverse = fediverse_factory(request)
         subj_parts = ['Fediverse', ap_object['type']]
@@ -309,16 +273,15 @@ def fediverse_factory(request):
     
     return __cache__['fediverse']
 
-@csrf_exempt
-def main(request):
+#@csrf_exempt
+async def main(request):
     if is_json_request(request):
-        return root_json(request)
+        return await root_json(request)
     else:
         return redirect('/')
 
-def root_json(request):
-    ## FIXME never awaited warning
-    log_request(request)
+async def root_json(request):
+    await log_request(request)
     return ActivityResponse(fediverse_factory(request).user, request)
 
 #@csrf_exempt
@@ -356,7 +319,7 @@ dumb.csrf_exempt = True
 auth_token.csrf_exempt = True
 auth.csrf_exempt = True
 outbox.csrf_exempt = True
-
+main.csrf_exempt = True
 
 async def save_activity(request, activity):
     '''

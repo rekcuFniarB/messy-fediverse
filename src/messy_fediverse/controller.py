@@ -367,6 +367,9 @@ async def save_activity(request, activity):
                 incoming = incoming
             )
             
+            ## FIXME probably need to fix context: if there is 'inReplyTo' value then retrieve 
+            ## then object and set context to context of that object
+            
             ## If json already stored
             if json_path and json_path.endswith('.json'):
                 if not path.isfile(json_path):
@@ -740,6 +743,92 @@ class Following(View):
                 result = await fediverse.unfollow(user_id)
         
         return redirect(reverse('interact') + '?' + urlencode({'acct': user_id}))
+
+class OrderedItemsView(View):
+    model = None
+    query_filter = {}
+    limit = 10
+    select = []
+    
+    def get_request_url(self, request, with_query_string=True):
+        proto = request_protocol(request)
+        request_query_string = ''
+        if with_query_string:
+            request_query_string = request.META.get('QUERY_STRING', '')
+            if request_query_string:
+                request_query_string = f'?{request_query_string}'
+        return f'{proto}://{request.site.domain}{request.path}{request_query_string}'
+    
+    def set_filter(self, *args, **kwargs):
+        self.query_filter = {}
+    
+    async def get_queryset(self):
+        page = self.request.GET.get('page') or 0
+        page = int(page)
+        if page > 0:
+            page -= 1
+        elif page < 0:
+            page = 0
+        
+        offset = page * self.limit
+        
+        qs = self.model.objects.filter(**self.query_filter).order_by('-pk')
+        totalCount = await qs.acount()
+        qs = qs[offset:offset+self.limit+1]
+        qs.totalCount = totalCount
+        return qs
+    
+    async def get(self, request, *args, **kwargs):
+        self.set_filter(request, *args, **kwargs)
+        qs = await self.get_queryset()
+        data = {
+            '@context': 'https://www.w3.org/ns/activitystreams',
+            'type': 'OrderedCollection',
+            'totalItems': qs.totalCount
+        }
+        uri = self.get_request_url(request, False)
+        page = request.GET.get('page') or 0
+        page = int(page)
+        if not page:
+            data['id'] = uri
+            data['first'] = f'{uri}?page=1'
+        else:
+            data['id'] = f'{uri}?page={page}'
+            data['type'] = 'OrderedCollectionPage'
+            data['partOf'] = uri
+            data['orderedItems'] = []
+            async for _item in qs.values():
+                if not len(self.select):
+                    data['orderedItems'].append(_item)
+                elif len(self.select) == 1:
+                    data['orderedItems'].append(_item.get(self.select[0]))
+                else:
+                    item = {}
+                    for field in self.select:
+                        item[field] = _item.get(field)
+                    data['oorderedItems'].append(item)
+            
+            if len(data['orderedItems']) > self.limit:
+                ## we have one extra item
+                data['orderedItems'] = data['orderedItems'][:self.limit]
+                ## Has next page
+                page += 1
+                data['next'] = f'{uri}?page={page}'
+        
+        return ActivityResponse(data)
+
+class Followers(OrderedItemsView):
+    model = Follower
+    select = ('uri',)
+    
+    def set_filter(self, request, *args, **kwargs):
+        fediverseUser = fediverse_factory(request)
+        self.query_filter = {
+            'disabled': False,
+            'accepted': True,
+            'object_uri': fediverseUser.id
+        }
+
 
 def webfinger(request):
     '''

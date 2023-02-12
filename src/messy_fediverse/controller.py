@@ -176,7 +176,7 @@ async def email_notice(request, activity):
         '''
         
         return mail_admins(
-            subject=' '.join(subj_parts),
+            subject=strip_tags(' '.join(subj_parts))[:80].replace('\n', '').replace('\r', ''),
             fail_silently=not settings.DEBUG,
             message=strip_tags(message),
             html_message=message

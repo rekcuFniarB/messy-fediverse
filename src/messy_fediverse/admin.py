@@ -44,7 +44,7 @@ class FollowerAdmin(admin.ModelAdmin):
             
             ## FIXME succeedes only once, second time it returns "loop closed" error
             actorInfo, = await fediverse.gather_http_responses(
-                fediverse.get(follower.uri, session=session)
+                fediverse.aget(follower.uri, session=session)
             )
             
             if type(actorInfo) is not dict:

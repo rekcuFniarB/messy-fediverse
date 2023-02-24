@@ -126,7 +126,7 @@ async def email_notice(request, activity):
     ):
         ## Trying to get object content
         async with aiohttp.ClientSession() as session:
-            ap_object, = await fediverse.gather_http_responses(fediverse.get(ap_object, session))
+            ap_object, = await fediverse.gather_http_responses(fediverse.aget(ap_object, session))
     
     if 'type' in ap_object:
         subj_parts = ['Fediverse', activity.get('type', ''), ap_object['type']]
@@ -139,7 +139,7 @@ async def email_notice(request, activity):
                 activity['authorInfo'] = {}
                 try:
                     async with aiohttp.ClientSession() as session:
-                        activity['authorInfo'], = await fediverse.gather_http_responses(fediverse.get(attributedTo, session))
+                        activity['authorInfo'], = await fediverse.gather_http_responses(fediverse.aget(attributedTo, session))
                 except:
                     pass
             
@@ -388,7 +388,7 @@ async def save_activity(request, activity):
             ## Retrieving actor info from the net
             ## Getting existing session
             session = await fediverse.http_session()
-            actorInfo, = await fediverse.gather_http_responses(fediverse.get(act.actor_uri, session=session))
+            actorInfo, = await fediverse.gather_http_responses(fediverse.aget(act.actor_uri, session=session))
             ## If actor info is valid
             endpoint_url = None
             if type(actorInfo) is dict:
@@ -597,7 +597,7 @@ class Replies(View):
                 username, host = form.cleaned_data['account'].split('@')
                 
                 async with aiohttp.ClientSession() as session:
-                    webfinger, = await fediverse.gather_http_responses(fediverse.get(f'https://{host}/.well-known/webfinger?resource=acct:{form.cleaned_data["account"]}', session=session))
+                    webfinger, = await fediverse.gather_http_responses(fediverse.aget(f'https://{host}/.well-known/webfinger?resource=acct:{form.cleaned_data["account"]}', session=session))
                 
                 if type(webfinger) is dict and 'links' in webfinger and type(webfinger['links']) is list:
                     for link in webfinger['links']:
@@ -681,7 +681,7 @@ class Inbox(View):
                 # result = await fediverse.process_object(data)
                 # data['_json'] = result
                 if 'actor' in data and 'authorInfo' not in data and 'authorInfo' not in data.get('object', {}):
-                    data['authorInfo'], = await fediverse.gather_http_responses(fediverse.get(data['actor'], session))
+                    data['authorInfo'], = await fediverse.gather_http_responses(fediverse.aget(data['actor'], session))
                 
                 await email_notice(request, data)
                 should_log_request = False
@@ -992,7 +992,7 @@ class Interact(View):
         if url:
             async with aiohttp.ClientSession() as session:
                 #await fediverse.http_session(session)
-                fresponse = fediverse.get(url, session=session)
+                fresponse = fediverse.aget(url, session=session)
                 data, = await fediverse.gather_http_responses(fresponse)
             if type(data) is not dict:
                 raise BadRequest(f'Got unexpected data from {url}: {data}')
@@ -1022,14 +1022,14 @@ class Interact(View):
             async with aiohttp.ClientSession() as session:
                 for user_id in user_ids:
                     if type(user_id) is str:
-                        tasks.append(fediverse.get(user_id, session=session))
+                        tasks.append(fediverse.aget(user_id, session=session))
                     elif type(user_id) is list:
                         ## Peertube?
                         for item in user_id:
                             if type(item) is str:
-                                tasks.append(fediverse.get(item, session=session))
+                                tasks.append(fediverse.aget(item, session=session))
                             elif type(item) is dict and 'id' in item:
-                                tasks.append(fediverse.get(item['id'], session=session))
+                                tasks.append(fediverse.aget(item['id'], session=session))
                 tasks = await fediverse.gather_http_responses(*tasks)
             
             for user_obj in tasks:
@@ -1081,7 +1081,7 @@ class Interact(View):
                 
                 ## If we are replying
                 if 'link' in form.cleaned_data and form.cleaned_data['link']:
-                    data, = await fediverse.gather_http_responses(fediverse.get(form.cleaned_data['link'], session=session))
+                    data, = await fediverse.gather_http_responses(fediverse.aget(form.cleaned_data['link'], session=session))
                     #data = cache.get(form.cleaned_data['link'], sentinel)
                     if data is sentinel:
                         raise BadRequest(f'Object "{form.cleaned_data["link"]}" has been lost, try again.')

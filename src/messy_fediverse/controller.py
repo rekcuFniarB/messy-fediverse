@@ -21,6 +21,7 @@ from django.utils.http import urlencode
 from datetime import datetime
 import sys
 from asgiref.sync import sync_to_async
+import asyncio
 import aiohttp
 from .models import Activity, Follower, FederatedEndpoint
 #from pprint import pprint
@@ -664,6 +665,7 @@ class Inbox(View):
         should_log_request = True
         data = None
         responseData = {'success': False}
+        tasks = []
         
         ## If we've received a JSON
         if is_post_json(request):
@@ -683,22 +685,26 @@ class Inbox(View):
                 if 'actor' in data and 'authorInfo' not in data and 'authorInfo' not in data.get('object', {}):
                     data['authorInfo'], = await fediverse.gather_http_responses(fediverse.aget(data['actor'], session))
                 
-                await email_notice(request, data)
                 should_log_request = False
-                
-                saveResult = await save_activity(request, data)
-                
-        
-        if 'type' in data and data['type'] == 'Delete':
-            should_log_request = False
-            return JsonResponse({
-                'success': True,
-                'status': 'success',
-                'message': "Fuck off, I don't give a fuck what you delete."
-            })
+                saveResult = save_activity(request, data)
+                tasks.append(saveResult)
+            
+            if 'type' in data and data['type'] == 'Delete':
+                should_log_request = False
+                responseData['success'] = True
+                responseData['status'] = 'success'
+                responseData['message'] = "Fuck off, I don't give a fuck what you delete."
+            else:
+                tasks.append(email_notice(request, data))
         
         if should_log_request:
-            await log_request(request, data)
+            ## DEBUG
+            tasks.append(log_request(request, data))
+        
+        if len(tasks):
+            tasks = await asyncio.gather(*tasks)
+            if saveResult:
+                saveResult = tasks[0]
         
         responseData['success'] = bool(saveResult)
         if saveResult:

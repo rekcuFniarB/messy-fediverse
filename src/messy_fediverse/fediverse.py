@@ -152,6 +152,8 @@ class Fediverse:
         Async version of get()
         '''
         data = None
+        cache_key = None
+        
         if self.__cache__ is not None:
             cache_key = self.mk_cache_key(url)
             data = await sync_to_async(self.__cache__.get)(cache_key, None)
@@ -160,6 +162,7 @@ class Fediverse:
             ## Retrns coroutine
             ## We don't await here because of batch requests gathered at once
             result = self.get(url, session, *args, **kwargs)
+            self.stderrlog('NO CACHE FOR', cache_key)
         else:
             ## Got data from cache
             if type(data) is dict:

@@ -218,6 +218,9 @@ class Fediverse:
         Gathers multiple async requests.
         tasks: list of tasks or coroutines
         '''
+        if not len(tasks):
+            return tasks
+        
         #loop = asyncio.get_running_loop()
         urls = []
         #tasks = await asyncio.gather(*tasks, return_exceptions=not self.__DEBUG__)

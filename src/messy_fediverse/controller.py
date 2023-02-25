@@ -10,6 +10,8 @@ from django.views.decorators.csrf import csrf_exempt, csrf_protect
 from django.utils.decorators import method_decorator
 from django.templatetags.static import static as _staticurl
 from django.utils.html import strip_tags
+from django.forms.models import model_to_dict
+from django.db.models import Q
 from .forms import InteractForm, InteractSearchForm, ReplyForm
 from .fediverse import Fediverse
 from . import html
@@ -27,8 +29,12 @@ from .models import Activity, Follower, FederatedEndpoint
 #from pprint import pprint
 
 class ActivityResponse(JsonResponse):
-    def __init__(self, data, request=None):
+    def __init__(self, _data, request=None):
         content_type = 'application/activity+json'
+        data = {
+            '@context': 'https://www.w3.org/ns/activitystreams'
+        }
+        data.update(_data)
         
         if request:
             ## Return content type they want
@@ -43,7 +49,7 @@ sentinel = object()
 __cache__ = {}
 
 def stderrlog(*msg):
-    if settings.DEBUG:
+    if settings.DEBUG or 'debug' in msg or 'DEBUG' in msg:
         print(*msg, file=sys.stderr, flush=True)
 
 @sync_to_async
@@ -756,6 +762,23 @@ class OrderedItemsView(View):
     limit = 10
     select = []
     
+    @classmethod
+    async def object_to_dict(cls, obj, fields=[]):
+        if hasattr(obj, 'get_dict'):
+            d = await obj.get_dict()
+        else:
+            d = model_to_dict(obj)
+        
+        if len(fields):
+            ## Filtering keys
+            d = {k: d.get(k) for k in fields}
+        
+        for k in d:
+            if isinstance(d[k], object):
+                d[k] = str(d[k])
+        
+        return d
+    
     def get_request_url(self, request, with_query_string=True):
         proto = request_protocol(request)
         request_query_string = ''
@@ -767,6 +790,7 @@ class OrderedItemsView(View):
     
     def set_filter(self, *args, **kwargs):
         self.query_filter = {}
+        return self.query_filter
     
     async def get_queryset(self):
         page = self.request.GET.get('page') or 0
@@ -775,7 +799,15 @@ class OrderedItemsView(View):
         except:
             page = 0
         
-        qs = self.model.objects.filter(**self.query_filter)
+        if type(self.query_filter) is dict:
+            qs = self.model.objects.filter(**self.query_filter)
+        elif type(self.query_filter) is list:
+            qs = self.model.objects.filter(*self.query_filter)
+        elif isinstance(self.query_filter, Q):
+            qs = self.model.objects.filter(self.query_filter)
+        else:
+            qs = self.models.objects.all()
+        
         ## Getting total count
         totalCount = await qs.acount()
         if page:
@@ -791,7 +823,6 @@ class OrderedItemsView(View):
         self.set_filter(request, *args, **kwargs)
         qs = await self.get_queryset()
         data = {
-            '@context': 'https://www.w3.org/ns/activitystreams',
             'type': 'OrderedCollection',
             'totalItems': qs.totalCount
         }
@@ -813,17 +844,12 @@ class OrderedItemsView(View):
             data['partOf'] = uri
             data['orderedItems'] = []
             ids = []
-            async for _item in qs.values():
-                ids.append(_item.get('id'))
-                if not len(self.select):
-                    data['orderedItems'].append(_item)
-                elif len(self.select) == 1:
-                    data['orderedItems'].append(_item.get(self.select[0]))
-                else:
-                    item = {}
-                    for field in self.select:
-                        item[field] = _item.get(field)
-                    data['oorderedItems'].append(item)
+            async for _item in qs:
+                ids.append(_item.pk)
+                _item = await self.object_to_dict(_item, self.select)
+                if len(_item) == 1:
+                    _item = tuple(_item.values())[0]
+                data['orderedItems'].append(_item)
             
             if len(data['orderedItems']) > self.limit:
                 ## we have one extra item
@@ -845,7 +871,21 @@ class Followers(OrderedItemsView):
             'accepted': True,
             'object_uri': fediverseUser.id
         }
+        return self.query_filter
 
+
+class Outbox(OrderedItemsView):
+    model = Activity
+    
+    def set_filter(self, request, *args, **kwargs):
+        fediverseUser = fediverse_factory(request)
+        self.query_filter = Q(
+            Q(activity_type='CRE') | Q(activity_type='ANN'),
+            disabled=False,
+            incoming=False,
+            actor_uri=fediverseUser.id
+        )
+        return self.query_filter
 
 def webfinger(request):
     '''

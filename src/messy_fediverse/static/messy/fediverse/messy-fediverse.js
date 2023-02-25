@@ -95,13 +95,36 @@
                 if (event.target.closest('button.reply-js')) {
                     return this.replyToComment(event);
                 }
-                if (event.target.closest('button.delete-js')) {
+                else if (event.target.closest('button.delete-js')) {
                     return this.deleteReply(event);
                 }
-                if (event.target.closest('[data-ajax-target]')) {
+                else if (event.target.closest('[data-ajax-target]')) {
                     return this.ajaxLoader(event);
                 }
+                else {
+                    let eTarget = event.target.closest('[data-action]');
+                    if (eTarget && typeof this[eTarget.dataset.action] === 'function') {
+                        return this[eTarget.dataset.action](event);
+                    }
+                }
             }.bind(messyFediverse); // clicksHandler
+            
+            messyFediverse.togglePreview = function(event) {
+                const form = event.target.closest('form');
+                const previewBlock = document.getElementById('messy-fediverse-preview');
+                const previewContainer = previewBlock.querySelector('.preview');
+                if (form) {
+                    // Preview button was clicked
+                    previewContainer.innerHTML = form.elements.content.value;
+                    form.classList.add('d-none');
+                    previewBlock.classList.remove('d-none');
+                    previewBlock.callbackForm = form;
+                } else {
+                    // Edit button was clicked
+                    previewBlock.classList.add('d-none');
+                    previewBlock.callbackForm.classList.remove('d-none');
+                }
+            }.bind(messyFediverse);
             
             messyFediverse.replyToComment = function(event) {
                 var parentComment = event.target.closest('[data-uri]');

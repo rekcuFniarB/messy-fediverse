@@ -770,17 +770,20 @@ class OrderedItemsView(View):
     
     async def get_queryset(self):
         page = self.request.GET.get('page') or 0
-        page = int(page)
-        if page > 0:
-            page -= 1
-        elif page < 0:
+        try:
+            page = int(page)
+        except:
             page = 0
         
-        offset = page * self.limit
-        
-        qs = self.model.objects.filter(**self.query_filter).order_by('-pk')
+        qs = self.model.objects.filter(**self.query_filter)
+        ## Getting total count
         totalCount = await qs.acount()
-        qs = qs[offset:offset+self.limit+1]
+        if page:
+            ## Pagination
+            qs = qs.filter(pk__lte=page)
+        qs = qs.order_by('-pk')
+        ## Applying limit
+        qs = qs[0:self.limit+1]
         qs.totalCount = totalCount
         return qs
     
@@ -794,16 +797,24 @@ class OrderedItemsView(View):
         }
         uri = self.get_request_url(request, False)
         page = request.GET.get('page') or 0
-        page = int(page)
+        try:
+            page = int(page)
+        except:
+            page = 0
+        
         if not page:
             data['id'] = uri
-            data['first'] = f'{uri}?page=1'
+            firstItem = await qs.afirst()
+            if firstItem:
+                data['first'] = f'{uri}?page={firstItem.pk}'
         else:
             data['id'] = f'{uri}?page={page}'
             data['type'] = 'OrderedCollectionPage'
             data['partOf'] = uri
             data['orderedItems'] = []
+            ids = []
             async for _item in qs.values():
+                ids.append(_item.get('id'))
                 if not len(self.select):
                     data['orderedItems'].append(_item)
                 elif len(self.select) == 1:
@@ -816,10 +827,10 @@ class OrderedItemsView(View):
             
             if len(data['orderedItems']) > self.limit:
                 ## we have one extra item
-                data['orderedItems'] = data['orderedItems'][:self.limit]
+                nextPageItem = data['orderedItems'].pop()
+                nextPageId = ids.pop()
                 ## Has next page
-                page += 1
-                data['next'] = f'{uri}?page={page}'
+                data['next'] = f'{uri}?page={nextPageId}'
         
         return ActivityResponse(data)
 

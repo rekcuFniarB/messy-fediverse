@@ -3,10 +3,10 @@
         var messyFediverse = document.getElementById('messy-fediverse');
         if (!!messyFediverse && typeof messyFediverse.onFormSubmit !== 'function') {
             /**
-            * Form submit handler. Adds AJAX support for forms.
-            * @param object Event object.
-            * @return promise object.
-            */
+             * Form submit handler. Adds AJAX support for forms.
+             * @param object Event object.
+             * @return promise object.
+             */
             messyFediverse.onFormSubmit = function(event) {
                 event.preventDefault();
                 var requestUrl = new URL(event.target.action);
@@ -50,6 +50,8 @@
                     }
                 }
                 
+                this.loading();
+                
                 result = fetch(requestUrl.href, requestParams).then(response => {
                     if (!response.ok) {
                         throw new Error('Request failed.');
@@ -81,6 +83,8 @@
                 }).catch(error => {
                     console.error('ERROR:', error);
                     alert(error);
+                }).finally(() => {
+                    this.loading(false);
                 });
                 
                 if (!!event.target.elements.uri) {
@@ -147,6 +151,7 @@
                     }
                     // First hidden input
                     csrf = form.querySelector('input[type="hidden"]');
+                    this.loading();
                     fetch(
                         form.action + '?' + new URLSearchParams(requestParams).toString(),
                         {
@@ -177,6 +182,8 @@
                     .catch(error => {
                         console.error('ERROR:', error);
                         alert(error);
+                    }).finally(() => {
+                        this.loading(false);
                     });
                 }
             }.bind(messyFediverse);
@@ -188,6 +195,7 @@
                     if (!!ajaxTarget) {
                         event.preventDefault();
                         event.stopPropagation();
+                        this.loading();
                         fetch(eventTarget.href, {
                             headers: {
                                 'X-Requested-With': 'XMLHttpRequest'
@@ -202,15 +210,17 @@
                             newContent = newContent.querySelector('#messy-fediverse-block-main,main,body') || newContent;
                             ajaxTarget.innerHTML = newContent.innerHTML;
                             window.dispatchEvent(new Event('load'));
+                        }).finally(() => {
+                            this.loading(false);
                         });
                     }
                 }
             }.bind(messyFediverse);
             
             /**
-            * Refresh page content
-            * @param string HTML of new content
-            */
+             * Refresh page content
+             * @param string HTML of new content
+             */
             messyFediverse.updateContent = function(content) {
                 if (!!content) {
                     var newContent = document.createElement('div');
@@ -243,9 +253,25 @@
                 }
             }.bind(messyFediverse);
             
+            messyFediverse.loading = function(on) {
+                if (typeof on === 'undefined') {
+                    on = true;
+                }
+                
+                if (on) {
+                    document.body.classList.add('loading');
+                    document.body.style.pointerEvents = 'none';
+                } else {
+                    document.body.classList.remove('loading');
+                    document.body.style.pointerEvents = '';
+                }
+                
+                return on;
+            }.bind(messyFediverse);
+            
             /**
-            * Caching form inputs
-            */
+             * Caching form inputs
+             */
             messyFediverse.cacheFormInput = function(event) {
                 if (!!event.target.name && typeof event.target.value !== 'undefined') {
                     localStorage.setItem(`messyFediverseFormCache_${event.target.name}`, event.target.value);

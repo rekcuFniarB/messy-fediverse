@@ -349,7 +349,7 @@ class Fediverse:
             kwargs['headers']['Signature'] = self.sign(url, kwargs['headers'])
         
         ## Returns coroutine
-        return getattr(session, method)(url, timeout=7.0, *args, **kwargs)
+        return getattr(session, method)(url, timeout=5.0, *args, **kwargs)
     
     async def parse_tags(self, content):
         words = self._rewhitespace.split(content)

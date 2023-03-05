@@ -498,29 +498,72 @@ class Replies(View):
             data
         )
     
-    async def get_replies(self, request, rpath, content=False):
-        rpath = rpath.strip('/')
-        replies = []
+    async def get_replies(self, request, rpath, content=False, _data=None):
+        '''
+        Get replies from DB.
+        request: HttpRequest object
+        rpath: string path part of activityPub object (with no domain)
+        content: bool whether content on urls only need to select
+        _data: collector
+        '''
+        if _data is None:
+            _data = {
+                'replies': [],
+                'contexts': []
+            }
+        
+        rpath = rpath.lstrip('/')
+        
         if not rpath.startswith('http://') and not rpath.startswith('https://'):
             ## legacy method
-            replies = await fediverse_factory(request).get_replies(rpath, content=content)
+            _data['replies'] = await fediverse_factory(request).get_replies(rpath, content=content)
             context = self.parent_uri(request, rpath)
         else:
             context = rpath
         
-        items = Activity.objects.filter(context=context, disabled=False)
+        if context not in _data['contexts']:
+            _data['contexts'].append(context)
+        
+        selfItem = await Activity.objects.filter(object_uri=context, disabled=False).afirst()
+        if selfItem and selfItem.context and selfItem.context != context:
+            if selfItem.context not in _data['contexts']:
+                _data['contexts'].append(selfItem.context)
+            items = Activity.objects.filter(Q(context=context) | Q(context=selfItem.context), disabled=False)
+        else:
+            items = Activity.objects.filter(context=context, disabled=False)
+        
+        items = items.order_by('pk')
+        
         async for item in items:
-            if item.object_uri == context:
+            if item.object_uri == item.context:
+                ## skip self
                 continue
             
             if content:
-                replies.append(await item.get_dict())
+                toAppend = await item.get_dict()
             else:
-                replies.append(item.object_uri)
+                toAppend = item.object_uri
             
-            replies.extend(await self.get_replies(request, item.object_uri, content))
+            if item.activity_type == 'DEL':
+                ## Item was deleted
+                if toAppend in _data['replies']:
+                    del(_data['replies'][_data['replies'].index(toAppend)])
+                else:
+                    for n, reply in enumerate(_data['replies']):
+                        if type(reply) is dict and item.object_uri:
+                            apObject = reply.get('object')
+                            if item.object_uri == apObject or (type(apObject) is dict and item.object_uri == apObject.get('id')):
+                                del(_data['replies'][n])
+                continue
+            
+            if item.object_uri in _data['contexts']:
+                continue
+            
+            if toAppend not in _data['replies']:
+                _data['replies'].append(toAppend)
+                await self.get_replies(request, item.object_uri, content, _data)
         
-        return replies
+        return _data['replies']
     
     async def get(self, request, rpath):
         rpath = rpath.strip('/')

@@ -242,12 +242,17 @@ class Fediverse:
                 ## Not a respone object. May be a dict from cache or exception
                 result = self.mkcoroutine(response)
             elif not response.ok:
-                #response_text = await response.text()
+                response_text = '-'
+                try:
+                    response_text = await response.text()
+                except BaseException as e:
+                    response_text = str(e)
+                
                 try:
                     #self.syslog(f'BAD RESPONSE FOR POST TO URL "{response.url}": "{response_text}"')
                     response.raise_for_status()
                 except BaseException as e:
-                    e.args = (*e.args, f'URL: {response.url}')
+                    e.args = (*e.args, f'URL: {response.url}', response_text[:128])
                     result = self.mkcoroutine(e)
             elif 'content-type' in response.headers and 'application/' in response.headers['content-type'] and 'json' in response.headers['content-type']:
                 ## FIXME Probably try/catch will not work here
@@ -275,7 +280,7 @@ class Fediverse:
         for n, result in enumerate(tasks):
             if isinstance(result, BaseException):
                 ## We return exception as string FIXME
-                tasks[n] = str(result)
+                tasks[n] = str(result) + ' ' + str(result.args[1:])
             elif type(result) is dict:
                 ## FIXME why is it here?
                 if 'type' in result and result['type'] == 'Person':
@@ -345,7 +350,7 @@ class Fediverse:
             kwargs['data'] = json.dumps(kwargs['json'])
             del(kwargs['json'])
             kwargs['headers']['Date'] = request_date
-            kwargs['headers']['Digest'] = 'sha-256=' + b64encode(sha256(kwargs['data'].encode('utf-8')).digest()).decode('utf-8')
+            kwargs['headers']['Digest'] = 'SHA-256=' + b64encode(sha256(kwargs['data'].encode('utf-8')).digest()).decode('utf-8')
             kwargs['headers']['Signature'] = self.sign(url, kwargs['headers'])
         
         ## Returns coroutine

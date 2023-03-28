@@ -336,20 +336,25 @@ class Fediverse:
         if 'json' in kwargs and type(kwargs['json']) is dict:
             if 'object' in kwargs['json'] and 'published' in kwargs['json']['object']:
                 pub_datetime = kwargs['json']['object']['published']
+                ## Removind zulu timezone indicator from the end of string
+                if pub_datetime.endswith('Z'):
+                    pub_datetime = pub_datetime[:-1]
+                
+                request_date = datetime.fromisoformat(pub_datetime)
+                nowtime = datetime.now()
+                
+                ## more than 10 minutes
+                if nowtime.timestamp() - request_date.timestamp() > 10 * 60:
+                    request_date = nowtime
             else:
-                pub_datetime = datetime.now().isoformat()
+                request_date = datetime.now()
             
             if 'headers' not in kwargs:
                 kwargs['headers'] = {}
             
-            ## Removind zulu timezone indicator from the end of string
-            if pub_datetime.endswith('Z'):
-                pub_datetime = pub_datetime[:-1]
-            
-            request_date = emailutils.format_datetime(datetime.fromisoformat(pub_datetime)).replace(' -0000', ' GMT')
             kwargs['data'] = json.dumps(kwargs['json'])
             del(kwargs['json'])
-            kwargs['headers']['Date'] = request_date
+            kwargs['headers']['Date'] = emailutils.format_datetime(request_date).replace(' -0000', ' GMT')
             kwargs['headers']['Digest'] = 'SHA-256=' + b64encode(sha256(kwargs['data'].encode('utf-8')).digest()).decode('utf-8')
             kwargs['headers']['Signature'] = self.sign(url, kwargs['headers'])
         

@@ -1,11 +1,16 @@
 from django import forms
+from django.conf import settings
+
+def get_languages():
+    return (('', ''), *settings.LANGUAGES)
 
 class InteractForm(forms.Form):
-    subject = forms.CharField(max_length=255, required=False)
+    summary = forms.CharField(max_length=255, required=False)
     content = forms.CharField(widget=forms.Textarea, max_length=65535, required=True)
+    language = forms.ChoiceField(required=False, choices=get_languages)
     link = forms.CharField(widget=forms.HiddenInput, required=False)
     tags = forms.CharField(widget=forms.Textarea(attrs={'rows': 3}), max_length=65535, required=False)
-    custom_url = forms.CharField(max_length=255, required=False)
+    url = forms.CharField(max_length=255, required=False)
     reply_direct = forms.CharField(widget=forms.HiddenInput, required=False)
     context = forms.CharField(widget=forms.HiddenInput, required=False)
 

@@ -566,24 +566,24 @@ class Fediverse:
         
         return activity
     
-    async def new_status(self, message, subject='', url=None, replyToObj=None, tags=None):
+    async def new_status(self, replyToObj=None, **kwargs):
         '''
         Create new status.
-        message: string message text
-        subject: string subject (optional)
+        content: string message text
+        summary: string subject (optional)
         url: string custom url (optional)
         replyToObj: dict AP object if new status is a reply to (optional)
         tags: string, space separated list of tags (hashtags or users to mention)
         '''
         
         data = {
-            'type': "Note",
+            'type': kwargs.get('type', 'Note'),
             'attributedTo': self.id,
-            'inReplyTo': None,
-            'content': message,
-            'source': message,
-            'sensitive': False,
-            'summary': subject,
+            'inReplyTo': kwargs.get('inReplyTo') or None,
+            'content': kwargs.get('content'),
+            'source': kwargs.get('content'),
+            'sensitive': bool(kwargs.get('sensitive')),
+            'summary': kwargs.get('summary'),
             'tag': [],
             "attachment": []
         }
@@ -591,7 +591,7 @@ class Fediverse:
         uniqid = self.uniqid()
         now = datetime.now()
         datepath = now.date().isoformat().replace('-', '/')
-        data['id'] = url or path.join(self.id, 'status', datepath, uniqid, '')
+        data['id'] = kwargs.get('url') or path.join(self.id, 'status', datepath, uniqid, '')
         data['url'] = data['id']
         data['published'] = now.isoformat() + 'Z'
         ## Example mastodon context/conversation:
@@ -599,9 +599,15 @@ class Fediverse:
         #"conversation": "tag:mastodon.ml,2022-05-21:objectId=9633346:objectType=Conversation",
         data['context'] = data['conversation'] = data['id']
         
+        ## If content language defined
+        if 'language' in kwargs and kwargs['language']:
+            data['contentMap'] = {
+                kwargs['language']: data['content']
+            }
+        
         tasks = [self.parse_tags(data['content'])]
-        if tags:
-            tasks.append(self.parse_tags(tags))
+        if 'tags' in kwargs:
+            tasks.append(self.parse_tags(kwargs['tags']))
         
         parse_results = await asyncio.gather(*tasks, return_exceptions=True)
         if type(parse_results[0]) is dict:

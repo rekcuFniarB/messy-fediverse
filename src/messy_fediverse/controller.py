@@ -380,7 +380,7 @@ async def save_activity(request, activity):
             ## If json already stored
             if json_path and json_path.endswith('.json'):
                 if not path.isfile(json_path):
-                    ## Tryint to normalize
+                    ## Trying to normalize
                     json_path = fediverse.normalize_file_path(json_path)
                 if path.isfile(json_path):
                     act.self_json.name = path.relpath(json_path, settings.MEDIA_ROOT)

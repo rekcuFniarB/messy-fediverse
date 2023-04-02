@@ -43,7 +43,7 @@ class Fediverse:
             syslog.syslog(syslog.LOG_INFO, f'MESSY SOCIAL: {msg}')
     
     def stderrlog(self, *msg):
-        if self.__DEBUG__:
+        if self.__DEBUG__ or 'debug' in msg or 'DEBUG' in msg:
             print(*msg, file=sys.stderr, flush=True)
     
     def mk_cache_key(self, key):
@@ -481,7 +481,7 @@ class Fediverse:
         
         if 'tag' in activity['object']:
             for tag in activity['object']['tag']:
-                if tag['type'] == 'Mention':
+                if tag.get('type') == 'Mention' and 'href' in tag and tag['href'] != self.id:
                     results.append(self.aget(tag['href']))
         
         if len(results) > 0:
@@ -688,7 +688,7 @@ class Fediverse:
         Sends Tombstone activity to federated instances.
         Returns activity dict.
         '''
-        ## FIXME we get "401 unauthorized" response from mastodons.
+        
         apobject = activity.get('object', {});
         if type(apobject) is dict:
             apobject['type'] = 'Tombstone'

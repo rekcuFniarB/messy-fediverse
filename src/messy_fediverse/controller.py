@@ -1031,6 +1031,8 @@ class Status(View):
                     'meta': delActivity._meta,
                     #'url': reverse(f'admin:{delActivity._meta.app_label}_{delActivity._meta.model_name}_change',  args=[delActivity.pk])
                 }
+            if fediverse.id == apobject.get('attributedTo'):
+                data['can_update'] = True
         else:
             if delActivity:
                 raise Http404(f'Status {rpath} was deleted.')
@@ -1089,6 +1091,10 @@ class Interact(View):
         
         fediverse = fediverse_factory(request)
         data = {}
+        data_settings = {
+            'can_update': False
+        }
+        
         if url:
             async with aiohttp.ClientSession() as session:
                 #await fediverse.http_session(session)
@@ -1096,6 +1102,12 @@ class Interact(View):
                 data, = await fediverse.gather_http_responses(fresponse)
             if type(data) is not dict:
                 raise BadRequest(f'Got unexpected data from {url}: {data}')
+            
+            ## If got activity
+            if 'object' in data and type(data['object']) is dict:
+                data = data['object']
+            
+            data.update(data_settings)
         
         if 'url' not in data and 'id' in data:
             data['url'] = data['id']
@@ -1107,6 +1119,11 @@ class Interact(View):
         if 'publicKey' in data:
             data['weFollow'] = fediverse.doWeFollow(data['id'])
         else:
+            if data.get('attributedTo') == fediverse.id and request.GET.get('edit'):
+                ## It's current user's activity and editing requested
+                form_textarea_content.append(data.get('content', '') + '\n')
+                data['can_update'] = True
+            
             user_ids = []
             for attr in ['to', 'cc']:
                 if attr in data and type(data[attr]) is list:
@@ -1172,6 +1189,7 @@ class Interact(View):
         data = None
         result = None
         form_is_valid = form.is_valid()
+        activity_type = 'Create'
         
         if form_is_valid:
             ## do processing
@@ -1201,8 +1219,13 @@ class Interact(View):
                         data['directMessage'] = True
                     if form.cleaned_data['context']:
                         data['context'] = form.cleaned_data['context']
+                    
+                    if data.get('attributedTo') == fediverse.id and request.POST.get('update'):
+                        ## updating
+                        activity_type = 'Update'
                 
                 result = await fediverse.new_status(
+                    activity_type=activity_type,
                     replyToObj=data,
                     **form.cleaned_data
                 )

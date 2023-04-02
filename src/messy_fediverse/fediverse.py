@@ -565,7 +565,7 @@ class Fediverse:
         
         return activity
     
-    async def new_status(self, replyToObj=None, **kwargs):
+    async def new_status(self, replyToObj=None, activity_type='Create', **kwargs):
         '''
         Create new status.
         content: string message text
@@ -575,34 +575,47 @@ class Fediverse:
         tags: string, space separated list of tags (hashtags or users to mention)
         '''
         
-        data = {
-            'type': kwargs.get('type', 'Note'),
-            'attributedTo': self.id,
-            'inReplyTo': kwargs.get('inReplyTo') or None,
-            'content': kwargs.get('content'),
-            'source': kwargs.get('content'),
-            'sensitive': bool(kwargs.get('sensitive')),
-            'summary': kwargs.get('summary'),
-            'tag': [],
-            "attachment": []
-        }
-        
-        uniqid = self.uniqid()
         now = datetime.now()
-        datepath = now.date().isoformat().replace('-', '/')
-        data['id'] = kwargs.get('url') or path.join(self.id, 'status', datepath, uniqid, '')
-        data['url'] = data['id']
-        data['published'] = now.isoformat() + 'Z'
-        ## Example mastodon context/conversation:
-        #"context":"tag:mastodon.ml,2022-05-21:objectId=9633346:objectType=Conversation",
-        #"conversation": "tag:mastodon.ml,2022-05-21:objectId=9633346:objectType=Conversation",
-        data['context'] = data['conversation'] = data['id']
+        
+        if activity_type == 'Update' and type(replyToObj) is dict:
+            data = replyToObj
+            data.update({
+                'content': kwargs.get('content'),
+                'source': kwargs.get('content'),
+                'sensitive': bool(kwargs.get('sensitive')),
+                'summary': kwargs.get('summary'),
+                'updated': now.isoformat() + 'Z',
+                'tag': [],
+                "attachment": []
+            })
+        else:
+            data = {
+                'type': kwargs.get('type', 'Note'),
+                'attributedTo': self.id,
+                'inReplyTo': kwargs.get('inReplyTo') or None,
+                'content': kwargs.get('content'),
+                'source': kwargs.get('content'),
+                'sensitive': bool(kwargs.get('sensitive')),
+                'summary': kwargs.get('summary'),
+                'tag': [],
+                "attachment": []
+            }
+            
+            uniqid = self.uniqid()
+            datepath = now.date().isoformat().replace('-', '/')
+            data['id'] = kwargs.get('url') or path.join(self.id, 'status', datepath, uniqid, '')
+            data['url'] = data['id']
+            data['published'] = now.isoformat() + 'Z'
+            ## Example mastodon context/conversation:
+            #"context":"tag:mastodon.ml,2022-05-21:objectId=9633346:objectType=Conversation",
+            #"conversation": "tag:mastodon.ml,2022-05-21:objectId=9633346:objectType=Conversation",
+            data['context'] = data['conversation'] = data['id']
         
         ## If content language defined
         if 'language' in kwargs and kwargs['language']:
-            data['contentMap'] = {
-                kwargs['language']: data['content']
-            }
+            if 'contentMap' not in data or data['contentMap'] is not dict:
+                data['contentMap'] = {}
+            data['contentMap'][kwargs['language']] = data['content']
         
         tasks = [self.parse_tags(data['content'])]
         if 'tags' in kwargs:
@@ -620,19 +633,21 @@ class Fediverse:
                     if tag not in data['attachment']:
                         data['attachment'].append(tag)
         
-        reply_save_path = None
         ## If we are replying to some status
-        if type(replyToObj) is dict:
+        if type(replyToObj) is dict and activity_type == 'Create':
             attributedTo = replyToObj.get('attributedTo')
+            
+            ## Use context of source if exists
+            #context = path.join(self.id, 'context', urlparse(status_id).path.strip('/'), '')
+            data['context'] = replyToObj.get('context', replyToObj.get('conversation', replyToObj.get('id')))
+            data['conversation'] = data['context']
+            ## Not all engines use context though, for example Misskey not.
             
             if type(attributedTo) is list:
                 for attr in attributedTo:
                     if type(attr) is dict and 'type' in attr and attr['type'] == 'Person':
                         attributedTo = attr['id']
                         break
-            
-            #if not attributedTo:
-            #    raise AttributeError('Source has no "attributedTo" value.')
             
             remote_author = None
             
@@ -660,34 +675,12 @@ class Fediverse:
                 if (len([x for x in data['tag'] if x.get('href', None) == originMention['href'] or x.get('name', None) == originMention['name']]) == 0):
                     data['tag'].append(originMention)
             
-            ## Use context of source if exists
-            #context = path.join(self.id, 'context', urlparse(status_id).path.strip('/'), '')
-            data['context'] = replyToObj.get('context', replyToObj.get('conversation', replyToObj.get('id')))
-            data['conversation'] = data['context']
-            ## Not all engines use context though, for example Misskey not.
-            
-            if 'context' in data and data['context'].startswith(self.id):
-                reply_save_path = data['context']
-            elif 'conversation' in data and data['conversation'].startswith(self.id):
-                reply_save_path = data['conversation']
-            
             data['inReplyTo'] = replyToObj.get('id')
             data['directMessage'] = replyToObj.get('directMessage', False)
         
-        save_path = f'{data["id"]}.json'
-        activity = self.activity(object=data)
-        
-        ## Presave, if receiving side wants to check if status exists
-        # self.save(save_path, activity)
-        
-        # if reply_save_path:
-        #     reply_save_path = path.join(reply_save_path, path.basename(data['id'].strip('/')) + '.reply.json')
-        #     self.symlink(save_path, reply_save_path)
-        
+        activity = self.activity(object=data, type=activity_type)
         ## Send mentions
         await self.federate(activity)
-        ## Resave with result
-        # activity['_json'] = self.save(save_path, activity)
         return activity
     
     async def delete_status(self, activity):

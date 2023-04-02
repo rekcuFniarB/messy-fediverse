@@ -33,6 +33,7 @@ class Activity(models.Model):
         ('UND', 'Undo'),
         ('ACC', 'Accept'),
         ('CRE', 'Create'),
+        ('UPD', 'Update'),
         ('NTE', 'Note'),
         ('DEL', 'Delete'),
         ('TOM', 'Tombstone'),
@@ -102,11 +103,12 @@ class Activity(models.Model):
         objects = cls.objects.filter(
             object_uri=object_uri,
             disabled=False,
-            activity_type='CRE',
+            # activity_type='CRE',
             actor_uri=fediverseUser.id,
             incoming=False,
             # context=object_uri
-        )
+        ).order_by('-pk')
+        
         activity = None
         async for item in objects.aiterator():
             activityDict = await item.get_dict()

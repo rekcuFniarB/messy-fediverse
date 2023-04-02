@@ -44,6 +44,10 @@
         <form action="{% url 'messy-fediverse:status' rpath %}" method="post" data-method="delete">
             {% csrf_token %}
             <button type="submit" name="delete" value="{{ activity.id }}">Delete</button>
+            
+            {% if can_update %}
+                <a href="{% url 'messy-fediverse:interact' %}?acct={{ object.id | urlencode }}&amp;edit=1">Edit</a>
+            {% endif %}
         </form>
     
         <h3>Raw</h3>

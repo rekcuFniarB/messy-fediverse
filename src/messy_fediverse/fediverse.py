@@ -147,15 +147,27 @@ class Fediverse:
             result = path.os.unlink(filepath)
         return result
     
+    async def http_session(self, session=None):
+        if not hasattr(self, '__http_session__'):
+            setattr(self, '__http_session__', None)
+        
+        if session is not None:
+            if self.__http_session__ is not None and not self.__http_session__.closed:
+                await self.__http_session__.close()
+            self.__http_session__ = session
+        elif self.__http_session__ is None or self.__http_session__.closed:
+            self.__http_session__ = aiohttp.ClientSession()
+        
+        return self.__http_session__
+    
     async def aget(self, url, session=None, *args, **kwargs):
         '''
         Async version of get()
         '''
         data = None
-        cache_key = None
+        cache_key = self.mk_cache_key(url)
         
-        if self.__cache__ is not None:
-            cache_key = self.mk_cache_key(url)
+        if self.__cache__ is not None and urlparse(cache_key).hostname != urlparse(self.id).hostname:
             data = await sync_to_async(self.__cache__.get)(cache_key, None)
         
         if data is None:
@@ -196,6 +208,60 @@ class Fediverse:
         #     session = self.http_session()
         
         return self.request(url, session, method='post', *args, **kwargs)
+    
+    def request(self, url, session, method='get', *args, **kwargs):
+        '''
+        Make async request to fediverse server
+        url: string URL
+        session: aiohttp session
+        method: 'get' | 'post' | e.t.c.
+        **kwargs: other kwargs that aiohttp accepts
+        '''
+        
+        if session is None:
+            ## Maybe created earlier, trying to reuse
+            session = getattr(self, '__http_session__', None)
+        
+        if self.__headers__ is not None:
+            headers = self.__headers__.copy()
+            if 'headers' in kwargs:
+                headers.update(kwargs['headers'])
+            kwargs['headers'] = headers
+        
+        if url.endswith('.json.json'):
+            url = url[:-len('.json')]
+        
+        ## Plume may return multiple values in "attributedTo"
+        if type(url) is list:
+            url = url[0]
+        
+        if 'json' in kwargs and type(kwargs['json']) is dict:
+            if 'object' in kwargs['json'] and 'published' in kwargs['json']['object']:
+                pub_datetime = kwargs['json']['object']['published']
+                ## Removind zulu timezone indicator from the end of string
+                if pub_datetime.endswith('Z'):
+                    pub_datetime = pub_datetime[:-1]
+                
+                request_date = datetime.fromisoformat(pub_datetime)
+                nowtime = datetime.now()
+                
+                ## more than 10 minutes
+                if nowtime.timestamp() - request_date.timestamp() > 10 * 60:
+                    request_date = nowtime
+            else:
+                request_date = datetime.now()
+            
+            if 'headers' not in kwargs:
+                kwargs['headers'] = {}
+            
+            kwargs['data'] = json.dumps(kwargs['json'])
+            del(kwargs['json'])
+            kwargs['headers']['Date'] = emailutils.format_datetime(request_date).replace(' -0000', ' GMT')
+            kwargs['headers']['Digest'] = 'SHA-256=' + b64encode(sha256(kwargs['data'].encode('utf-8')).digest()).decode('utf-8')
+            kwargs['headers']['Signature'] = self.sign(url, kwargs['headers'])
+        
+        ## Returns coroutine
+        return getattr(session, method)(url, timeout=5.0, *args, **kwargs)
     
     def is_coroutine(self, something):
         ## FIXME it's very stupid way, there is asyncio.iscoroutine
@@ -293,73 +359,6 @@ class Fediverse:
                     await self.cache_set(urls[n], result)
         
         return tasks
-    
-    async def http_session(self, session=None):
-        if not hasattr(self, '__http_session__'):
-            setattr(self, '__http_session__', None)
-        
-        if session is not None:
-            if self.__http_session__ is not None and not self.__http_session__.closed:
-                await self.__http_session__.close()
-            self.__http_session__ = session
-        elif self.__http_session__ is None or self.__http_session__.closed:
-            self.__http_session__ = aiohttp.ClientSession()
-        
-        return self.__http_session__
-    
-    def request(self, url, session, method='get', *args, **kwargs):
-        '''
-        Make async request to fediverse server
-        url: string URL
-        session: aiohttp session
-        method: 'get' | 'post' | e.t.c.
-        **kwargs: other kwargs that aiohttp accepts
-        '''
-        
-        if session is None:
-            ## Maybe created earlier, trying to reuse
-            session = getattr(self, '__http_session__', None)
-        
-        if self.__headers__ is not None:
-            headers = self.__headers__.copy()
-            if 'headers' in kwargs:
-                headers.update(kwargs['headers'])
-            kwargs['headers'] = headers
-        
-        if url.endswith('.json.json'):
-            url = url[:-len('.json')]
-        
-        ## Plume may return multiple values in "attributedTo"
-        if type(url) is list:
-            url = url[0]
-        
-        if 'json' in kwargs and type(kwargs['json']) is dict:
-            if 'object' in kwargs['json'] and 'published' in kwargs['json']['object']:
-                pub_datetime = kwargs['json']['object']['published']
-                ## Removind zulu timezone indicator from the end of string
-                if pub_datetime.endswith('Z'):
-                    pub_datetime = pub_datetime[:-1]
-                
-                request_date = datetime.fromisoformat(pub_datetime)
-                nowtime = datetime.now()
-                
-                ## more than 10 minutes
-                if nowtime.timestamp() - request_date.timestamp() > 10 * 60:
-                    request_date = nowtime
-            else:
-                request_date = datetime.now()
-            
-            if 'headers' not in kwargs:
-                kwargs['headers'] = {}
-            
-            kwargs['data'] = json.dumps(kwargs['json'])
-            del(kwargs['json'])
-            kwargs['headers']['Date'] = emailutils.format_datetime(request_date).replace(' -0000', ' GMT')
-            kwargs['headers']['Digest'] = 'SHA-256=' + b64encode(sha256(kwargs['data'].encode('utf-8')).digest()).decode('utf-8')
-            kwargs['headers']['Signature'] = self.sign(url, kwargs['headers'])
-        
-        ## Returns coroutine
-        return getattr(session, method)(url, timeout=5.0, *args, **kwargs)
     
     async def parse_tags(self, content):
         words = self._rewhitespace.split(content)

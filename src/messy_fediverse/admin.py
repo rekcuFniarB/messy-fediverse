@@ -1,6 +1,7 @@
 from django.contrib import admin
 from .models import FederatedEndpoint, Activity, Follower
-from .controller import fediverse_factory, save_activity, stderrlog
+from .controller import fediverse_factory, save_activity
+from .middleware import stderrlog
 from asgiref.sync import sync_to_async, async_to_sync
 import aiohttp
 # import asyncio

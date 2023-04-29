@@ -16,7 +16,7 @@ import aiohttp
 from asgiref.sync import async_to_sync
 
 def stderrlog(*msg):
-    if settings.DEBUG:
+    if settings.DEBUG or 'debug' in msg or 'DEBUG' in msg:
         print(*msg, file=sys.stderr, flush=True)
 
 class StdErrLogAllRequests:

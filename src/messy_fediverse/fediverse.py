@@ -13,10 +13,12 @@ import re
 import syslog
 import sys
 from functools import partial
-from asgiref.sync import sync_to_async
+from asgiref.sync import sync_to_async, async_to_sync
 from . import html
 
 class Fediverse:
+    __tasks__ = set()
+    
     def __init__(self, user, privkey, pubkey, headers=None, datadir='/tmp', cache=None, debug=False):
         '''
         :cache object: optional cache object used for caching requests
@@ -31,8 +33,66 @@ class Fediverse:
         self.__DEBUG__ = debug
         self._rewhitespace = re.compile(r'\s+')
     
+    @classmethod
+    def on_task_done(cls, task, *args, **kwargs):
+        '''Removing finished task'''
+        print('TASK DONE', task, cls.__tasks__, file=sys.stderr, flush=True)
+        cls.__tasks__.discard(task)
+    
     def __getattr__(self, name):
         return self.__user__.get(name, None)
+    
+    def get_request_trace_config(self, enabled=False):
+        '''
+        https://docs.aiohttp.org/en/stable/client_advanced.html#client-tracing
+        Returns list config for debugging slow requests
+        enabled: boolean
+        
+        Usage:
+            async with aiohttp.ClientSession(trace_configs=fediverse.get_request_trace_config(True)) as session:
+                pass
+        '''
+        config = []
+        
+        if enabled or self.__DEBUG__:
+            trace_config = aiohttp.TraceConfig()
+            setattr(trace_config, '__urls_due__',  [])
+            
+            async def on_request_start(session, trace_config_ctx, params):
+                trace_config.__urls_due__.append(params.url)
+                loop = asyncio.get_running_loop()
+                start = loop.time()
+                if not getattr(session, '__start_timestamp__', None):
+                    session.__start_timestamp__ = start
+                trace_config_ctx.start = session.__start_timestamp__
+                trace_config_ctx.request_start = start
+                trace_config_ctx.start_delay = start - trace_config_ctx.start
+                
+
+            async def on_request_end(session, trace_config_ctx, params):
+                if params.url in trace_config.__urls_due__:
+                    idx = trace_config.__urls_due__.index(params.url)
+                    del(trace_config.__urls_due__[idx])
+                
+                loop = asyncio.get_running_loop()
+                elapsed = loop.time() - trace_config_ctx.request_start
+                elapsed_total = loop.time() - trace_config_ctx.start
+                if elapsed_total > 0.500:
+                    self.stderrlog('DEBUG', 'REQUEST ELAPSED:', elapsed, 'TOTAL:', elapsed_total, 'TS END:', loop.time(), 'URL:', params.url, trace_config_ctx, 'URLS DUE:', trace_config.__urls_due__)
+            
+            async def on_request_exception(session, trace_config_ctx, params):
+                if params.url in trace_config.__urls_due__:
+                    idx = trace_config.__urls_due__.index(params.url)
+                    del(trace_config.__urls_due__[idx])
+                
+                loop = asyncio.get_running_loop()
+                self.stderrlog('DEBUG', 'REQUEST EXCEPTION:', loop.time(), params.url, trace_config_ctx, 'URLS DUE:', trace_config.__urls_due__)
+            
+            trace_config.on_request_start.append(on_request_start)
+            trace_config.on_request_end.append(on_request_end)
+            trace_config.on_request_exception.append(on_request_exception)
+            config.append(trace_config)
+        return config
     
     def uniqid(self):
         return hex(int(str(datetime.now().timestamp()).replace('.', '')))[2:]
@@ -209,6 +269,16 @@ class Fediverse:
         
         return self.request(url, session, method='post', *args, **kwargs)
     
+    async def arequest(self, url, session, method='get', *args, **kwargs):
+        self.stderrlog('NO SESSION', url, session)
+        ## FIXME workaround if session is unexpectedly closed
+        ## This actually hapens in controller.postprocess_tasks()
+        if session is None or session.closed:
+            async with aiohttp.ClientSession() as session:
+                return await self.request(url, session, method, *args, **kwargs)
+        else:
+            return await self.request(url, session, method, *args, **kwargs)
+    
     def request(self, url, session, method='get', *args, **kwargs):
         '''
         Make async request to fediverse server
@@ -216,11 +286,16 @@ class Fediverse:
         session: aiohttp session
         method: 'get' | 'post' | e.t.c.
         **kwargs: other kwargs that aiohttp accepts
+        Returns coroutine
         '''
         
         if session is None:
             ## Maybe created earlier, trying to reuse
             session = getattr(self, '__http_session__', None)
+        
+        ## FIXME workaround if session is unexpectedly closed
+        if session is None or session.closed:
+            return self.arequest(url, session, method, *args, **kwargs)
         
         if self.__headers__ is not None:
             headers = self.__headers__.copy()
@@ -287,10 +362,11 @@ class Fediverse:
         if not len(tasks):
             return tasks
         
-        #loop = asyncio.get_running_loop()
+        return_exceptions = True ## not self.__DEBUG__
+        # loop = asyncio.get_running_loop()
         urls = []
-        #tasks = await asyncio.gather(*tasks, return_exceptions=not self.__DEBUG__)
-        tasks = await asyncio.gather(*tasks, return_exceptions=True)
+        #tasks = await asyncio.gather(*tasks, return_exceptions=return_exceptions)
+        tasks = await asyncio.gather(*tasks, return_exceptions=return_exceptions)
         if all([asyncio.iscoroutine(x) for x in tasks]):
             ## Probably all are results of self.aget()
             return await self.gather_http_responses(*tasks)
@@ -300,7 +376,7 @@ class Fediverse:
                 ## self.get() and self.aget() are mixed in one batch request?
                 response = await response
                 tasks[n] = response
-                self.stderrlog('WARNING UNEXPECTED COROUTNE:', response)
+                self.stderrlog('DEBUG', 'WARNING UNEXPECTED COROUTNE:', response)
             
             result = None
             
@@ -336,7 +412,7 @@ class Fediverse:
             ## response may be an exception object. In this case we just call bool()
             #getattr(response, 'close', bool)()
         
-        tasks = await asyncio.gather(*tasks, return_exceptions=True)
+        tasks = await asyncio.gather(*tasks, return_exceptions=return_exceptions)
         
         # for response in tasks:
         #     ## Calling close() if object has such method
@@ -474,6 +550,7 @@ class Fediverse:
         endpoints = []
         results = []
         
+        ## FIXME we should be independent of django models
         if hasattr(self, 'federated_endpoints'):
             async for endpoint in self.federated_endpoints.aiterator():
                 if endpoint.uri not in endpoints:
@@ -508,16 +585,13 @@ class Fediverse:
         results = []
         activity['endpointsResults'] = []
         
-        for endpoint in endpoints:
-            start_ts = datetime.now().timestamp()
-            results.append(self.post(endpoint, json=activity))
-            diff_ts = datetime.now().timestamp() - start_ts
-            self.stderrlog('REQUEST TS:', endpoint, diff_ts)
+        # loop = asyncio.get_running_loop()
+        # start_ts = loop.time()
         
-        start_ts = datetime.now().timestamp()
+        for endpoint in endpoints:
+            results.append(self.post(endpoint, json=activity))
+        
         results = await self.gather_http_responses(*results)
-        diff_ts = datetime.now().timestamp() - start_ts
-        self.stderrlog('REQUESTS GATHER TS:', diff_ts)
         
         for n, result in enumerate(results):
             activity['endpointsResults'].append((endpoints[n], result))
@@ -525,7 +599,7 @@ class Fediverse:
         ## For debug
         activity['requestEndpoints'] = endpoints
         
-        return results
+        return activity
     
     def activity(self, **activity_upd):
         '''
@@ -565,7 +639,7 @@ class Fediverse:
         
         return activity
     
-    async def new_status(self, replyToObj=None, activity_type='Create', **kwargs):
+    async def new_status(self, replyToObj=None, activity_type='Create', on_federate_done=None, **kwargs):
         '''
         Create new status.
         content: string message text
@@ -679,9 +753,20 @@ class Fediverse:
             data['directMessage'] = replyToObj.get('directMessage', False)
         
         activity = self.activity(object=data, type=activity_type)
+        
         ## Send mentions
-        await self.federate(activity)
-        return activity
+        if callable(on_federate_done):
+            loop = asyncio.get_running_loop()
+            task = loop.create_task(self.federate(activity))
+            Fediverse.__tasks__.add(task)
+            task.add_done_callback(on_federate_done)
+            task.add_done_callback(Fediverse.on_task_done)
+        else:
+            # await self.federate(activity)
+            # Fediverse.__tasks__.add(self.federate(activity))
+            task = self.federate(activity)
+        
+        return (activity, task)
     
     async def delete_status(self, activity):
         '''

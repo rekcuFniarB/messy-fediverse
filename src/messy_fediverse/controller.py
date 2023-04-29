@@ -22,10 +22,12 @@ from urllib.parse import urlparse
 from django.utils.http import urlencode
 from datetime import datetime
 import sys
-from asgiref.sync import sync_to_async
+from asgiref.sync import sync_to_async, async_to_sync
 import asyncio
 import aiohttp
 from .models import Activity, Follower, FederatedEndpoint
+# from .middleware import stderrlog
+from functools import partial
 #from pprint import pprint
 
 class ActivityResponse(JsonResponse):
@@ -48,15 +50,44 @@ class ActivityResponse(JsonResponse):
 sentinel = object()
 __cache__ = {}
 
-def stderrlog(*msg):
-    if settings.DEBUG or 'debug' in msg or 'DEBUG' in msg:
-        print(*msg, file=sys.stderr, flush=True)
-
 @sync_to_async
 def request_user_is_staff(request):
     ## We can't just use request.user.is_staff from async views
     ## due to lazy executions, so we get errors.
     return request.user.is_staff
+
+def add_task(request, task):
+    '''
+    Adds new task to the queue
+    request: HttpRequest object
+    task: asyncio task object
+    Returns added task
+    '''
+    if 'tasks' not in __cache__:
+        __cache__['tasks'] = []
+    __cache__['tasks'].append((request, task))
+    return task
+
+def get_tasks():
+    '''
+    Returns list of tasks. List is erased after it.
+    '''
+    tasks = __cache__.get('tasks', [])
+    __cache__['tasks'] = []
+    return tasks
+
+async def postprocess_tasks(sender, **kwargs):
+    # loop = asyncio.get_running_loop()
+    # current_task = asyncio.current_task()
+    requests_tasks = get_tasks()
+    if len(requests_tasks):
+        tasks = [x[1] for x in requests_tasks]
+        activities = await asyncio.gather(*tasks)
+        save_results = []
+        for n, activity in enumerate(activities):
+            save_results.append(save_activity(requests_tasks[n][0], activity))
+        save_results = await asyncio.gather(*save_results)
+        return save_results
 
 def reverse(name, args=None, kwargs=None):
     '''
@@ -377,17 +408,17 @@ async def save_activity(request, activity):
             ## FIXME probably need to fix context: if there is 'inReplyTo' value then retrieve 
             ## then object and set context to context of that object
             
-            ## If json already stored
-            if json_path and json_path.endswith('.json'):
-                if not path.isfile(json_path):
-                    ## Trying to normalize
-                    json_path = fediverse.normalize_file_path(json_path)
-                if path.isfile(json_path):
-                    act.self_json.name = path.relpath(json_path, settings.MEDIA_ROOT)
-            else:
-                act.self_json.save('activity.json', content=ContentFile(json.dumps(activity)), save=False)
-            
-            await sync_to_async(act.save)()
+        ## If json already stored
+        if json_path and json_path.endswith('.json'):
+            if not path.isfile(json_path):
+                ## Trying to normalize
+                json_path = fediverse.normalize_file_path(json_path)
+            if path.isfile(json_path):
+                act.self_json.name = path.relpath(json_path, settings.MEDIA_ROOT)
+        else:
+            act.self_json.save('activity.json', content=ContentFile(json.dumps(activity)), save=False)
+        
+        await sync_to_async(act.save)()
         
         if actType == 'FOL':
             ## If follow request
@@ -1186,12 +1217,18 @@ class Interact(View):
     
     async def post(self, request):
         form = InteractForm(request.POST)
-        data = None
+        data = {}
         result = None
+        ap_object = None
         form_is_valid = form.is_valid()
         activity_type = 'Create'
         
         if form_is_valid:
+            # loop = asyncio.get_running_loop()
+            # loop.set_debug(True)
+            ## setting to one second to debug slow requests
+            # loop.slow_callback_duration = 1
+            
             ## do processing
             fediverse = fediverse_factory(request)
             async with aiohttp.ClientSession() as session:
@@ -1199,47 +1236,56 @@ class Interact(View):
                 
                 ## If we are replying
                 if 'link' in form.cleaned_data and form.cleaned_data['link']:
-                    data, = await fediverse.gather_http_responses(fediverse.aget(form.cleaned_data['link'], session=session))
-                    #data = cache.get(form.cleaned_data['link'], sentinel)
-                    if data is sentinel:
+                    ap_object, = await fediverse.gather_http_responses(fediverse.aget(form.cleaned_data['link'], session=session))
+                    #ap_object = cache.get(form.cleaned_data['link'], sentinel)
+                    if ap_object is sentinel:
                         raise BadRequest(f'Object "{form.cleaned_data["link"]}" has been lost, try again.')
+                    if type(ap_object) is not dict:
+                        stderrlog('DEBUG', 'GOT NON DICT FROM CACHE:', form.cleaned_data['link'], ap_object)
+                        raise BadRequest(f'God bad ap_object from remote {form.cleaned_data["link"]} or cache: {ap_object}')
                 
-                if data:
-                    if 'type' in data and data['type'] == 'Person':
+                if ap_object:
+                    if 'type' in ap_object and ap_object['type'] == 'Person':
                         #and form.cleaned_data['reply_direct']:
                         ## It'a a direct message FIXME
-                        person_to_reply = data
+                        person_to_reply = ap_object
                         ## Preparing source
-                        data = {
+                        ap_object = {
                             'attributedTo': person_to_reply['id'],
                             'attributedToPerson': person_to_reply
                         }
                     if form.cleaned_data['reply_direct']:
-                        data['id'] = form.cleaned_data['reply_direct']
-                        data['directMessage'] = True
+                        ap_object['id'] = form.cleaned_data['reply_direct']
+                        ap_object['directMessage'] = True
                     if form.cleaned_data['context']:
-                        data['context'] = form.cleaned_data['context']
+                        ap_object['context'] = form.cleaned_data['context']
                     
-                    if data.get('attributedTo') == fediverse.id and request.POST.get('update'):
+                    if ap_object.get('attributedTo') == fediverse.id and request.POST.get('update'):
                         ## updating
                         activity_type = 'Update'
                 
-                result = await fediverse.new_status(
+                # def callback(request, data, *args, **kwargs):
+                #     loop.create_task(save_activity(request, data.get('activity')))
+                
+                data['activity'], task = await fediverse.new_status(
                     activity_type=activity_type,
-                    replyToObj=data,
+                    replyToObj=ap_object,
+                    # on_federate_done=partial(callback, request, data),
                     **form.cleaned_data
                 )
+                ## To schedule later after response done.
+                add_task(request, task)
             
-            if result:
+            if 'activity' in data and data['activity']:
                 ## FIXME This became a little bit messy
-                redirect_path = result['object']['id']
-                context = result['object'].get('context', result['object'].get('conversation', None))
+                redirect_path = data['activity']['object']['id']
+                context = data['activity']['object'].get('context', data['activity']['object'].get('conversation', None))
                 if context and context.startswith(fediverse.id):
                     context = urlparse(context).path
                     redirect_path = context.replace(reversepath('dumb', 'context'), '').strip('/')
                     redirect_path = reversepath('replies', redirect_path)
                 
-                await save_activity(request, result)
+                await save_activity(request, data['activity'])
                 return redirect(redirect_path)
         
         data['form'] = form

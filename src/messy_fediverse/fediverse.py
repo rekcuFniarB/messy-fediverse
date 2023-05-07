@@ -677,8 +677,13 @@ class Fediverse:
             
             uniqid = self.uniqid()
             datepath = now.date().isoformat().replace('-', '/')
-            data['id'] = kwargs.get('url') or path.join(self.id, 'status', datepath, uniqid, '')
-            data['url'] = data['id']
+            new_id = path.join(self.id, 'status', datepath, uniqid, '')
+            data['url'] = kwargs.get('url') or new_id
+            data['id'] = data['url']
+            if urlparse(data['url']).hostname != urlparse(new_id).hostname:
+                ## We can override url but id should be kept if hostname doesn't match
+                data['id'] = new_id
+            
             data['published'] = now.isoformat() + 'Z'
             ## Example mastodon context/conversation:
             #"context":"tag:mastodon.ml,2022-05-21:objectId=9633346:objectType=Conversation",

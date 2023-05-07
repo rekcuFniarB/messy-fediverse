@@ -1067,10 +1067,10 @@ class Status(View):
         else:
             if delActivity:
                 raise Http404(f'Status {rpath} was deleted.')
-            elif 'inReplyTo' in apobject and apobject['inReplyTo']:
-                return redirect(apobject['inReplyTo'])
             elif 'url' in apobject and apobject['url'] and apobject['url'] != apobject['id']:
                 return redirect(apobject['url'])
+            elif 'inReplyTo' in apobject and apobject['inReplyTo']:
+                return redirect(apobject['inReplyTo'])
         
         if apobject['context'].startswith(fediverse.id):
             apobject['reply_path'] = reversepath('replies', urlparse(apobject['id']).path)

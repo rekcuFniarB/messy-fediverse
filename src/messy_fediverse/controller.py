@@ -447,11 +447,11 @@ async def save_activity(request, activity):
                 if not follower:
                     follower = Follower(
                         uri=act.actor_uri,
-                        object_uri=object_id,
-                        disabled=False,
-                        accepted=False
+                        object_uri=object_id
                     )
                 
+                follower.accepted = False
+                follower.disabled = False
                 follower.endpoint = endpoint
                 follower.activity = act
                 
@@ -481,10 +481,12 @@ async def save_activity(request, activity):
                     
         ## endif 'FOL' (follow request)
         elif actType == 'UND':
-            if apobject.get('type', None) == 'Follow' and object_id:
+            if (apobject.get('type', None) == 'Follow' and 'object' in apobject and
+                apobject['object'] and type(apobject['object']) is str and
+                'actor' in apobject and apobject['actor'] and type(apobject['actor']) is str):
                 ## if unfollow request
-                followers = Follower.objects.filter(uri=object_id)
-                await followers.aupdate(disabled=True)
+                followers = Follower.objects.filter(uri=apobject['actor'], object_uri=apobject['object'])
+                await followers.aupdate(disabled=True, accepted=False)
     
     return act
 

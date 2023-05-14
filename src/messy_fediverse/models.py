@@ -61,9 +61,12 @@ class Activity(models.Model):
         
         if self.self_json.name:
             try:
+                if self.self_json.closed:
+                    self.self_json.open()
                 self.self_json.seek(0)
                 activity = json.loads(self.self_json.read().decode('utf-8'))
                 activity['_static'] = True
+                self.self_json.close()
             except:
                 pass
         

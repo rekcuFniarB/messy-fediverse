@@ -416,7 +416,8 @@ async def save_activity(request, activity):
             if path.isfile(json_path):
                 act.self_json.name = path.relpath(json_path, settings.MEDIA_ROOT)
         else:
-            act.self_json.save('activity.json', content=ContentFile(json.dumps(activity)), save=False)
+            await sync_to_async(act.self_json.save)('activity.json', content=ContentFile(json.dumps(activity)), save=False)
+            await sync_to_async(act.self_json.close)()
         
         await sync_to_async(act.save)()
         

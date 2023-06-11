@@ -144,20 +144,30 @@
                 var comment = event.target.closest('[data-local-id]');
                 if (!!comment) {
                     event.preventDefault();
-                    var form = this.querySelector('form');
-                    var requestParams = {
-                        id: comment.dataset.localId,
-                        uri: comment.dataset.uri
+                    let form;
+                    for (let f of this.querySelectorAll('form')) {
+                        if (f.action.indexOf('/replies/') > -1) {
+                            form = f;
+                            break;
+                        }
                     }
+                    if (!form) {
+                        return alert('Form not found');
+                    }
+                    var url = new URL(form.action);
+                    url.searchParams.set('id', comment.dataset.localId || '');
+                    url.searchParams.set('uri', comment.dataset.uri || '');
                     // First hidden input
-                    csrf = form.querySelector('input[type="hidden"]');
+                    var csrf = [...form.elements].filter(item => {
+                        return item.type == 'hidden' && item.name.toLowerCase().indexOf('csrf') > -1;
+                    })[0] || {};
                     this.loading();
                     fetch(
-                        form.action + '?' + new URLSearchParams(requestParams).toString(),
+                        url,
                         {
                             method: 'DELETE',
                             headers: {
-                                'X-CSRFToken': csrf.value,
+                                'X-CSRFToken': csrf.value || '',
                                 'X-Requested-With': 'XMLHttpRequest'
                             }
                         }

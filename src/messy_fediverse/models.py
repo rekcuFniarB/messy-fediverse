@@ -116,7 +116,8 @@ class Activity(models.Model):
         async for item in objects.aiterator():
             activityDict = await item.get_dict()
             if 'object' in activityDict and type(activityDict['object']) is dict:
-                if activityDict['object'].get('type') == 'Note':
+                # if activityDict['object'].get('type') == 'Note':
+                if activityDict['object'].get('id') == object_uri:
                     activity = item
                     break
         return activity

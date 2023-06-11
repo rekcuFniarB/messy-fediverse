@@ -713,6 +713,7 @@ class Replies(View):
             raise BadRequest('Unknown form was submitted.')
     
     async def delete(self, request, rpath):
+        '''Delete reply locally'''
         if not await request_user_is_staff(request):
             raise PermissionDenied
         
@@ -1016,9 +1017,9 @@ class Status(View):
         object_uri = f'{proto}://{request.site.domain}{reversepath("status", rpath)}'
         data = {}
         fediverse = fediverse_factory(request)
-        activity = await Activity.get_note_activity(object_uri, fediverse)
+        activityObject = await Activity.get_note_activity(object_uri, fediverse)
         
-        if not activity:
+        if not activityObject:
             filepath = fediverse.normalize_file_path(f'{request.path.strip("/")}.json')
             
             if not path.isfile(filepath):
@@ -1028,7 +1029,7 @@ class Status(View):
                 activity = json.load(f)
         else:
             ## Got object from model
-            activity = await activity.get_dict()
+            activity = await activityObject.get_dict()
         
         apobject = activity
         
@@ -1038,12 +1039,13 @@ class Status(View):
         if 'conversation' not in apobject and 'context' not in apobject:
             apobject['context'] = apobject['conversation'] = apobject['id']
         
-        data['deleted'] = False
+        data['deleted'] = apobject.get('type') == 'Tombstone'
         object_uri = f'{proto}://{request.site.domain}{reversepath("status", rpath)}'
-        delActivity = await Activity.objects.filter(object_uri=object_uri, activity_type='DEL', incoming=False, actor_uri=fediverse.id).afirst()
+        delActivity = None
+        # delActivity = await Activity.objects.filter(object_uri=object_uri, activity_type='DEL', incoming=False, actor_uri=fediverse.id).afirst()
         
         if is_json_request(request):
-            if delActivity:
+            if delActivity or data['deleted']:
                 raise Http404(f'Status {rpath} was deleted.')
             
             if '@context' not in apobject:
@@ -1058,17 +1060,16 @@ class Status(View):
         
         if is_staff:
             data['raw_json'] = json.dumps(activity, indent=4)
-            if delActivity:
-                data['deleted'] = {
-                    'id': delActivity.pk,
-                    'uri': delActivity.uri,
-                    'meta': delActivity._meta,
-                    #'url': reverse(f'admin:{delActivity._meta.app_label}_{delActivity._meta.model_name}_change',  args=[delActivity.pk])
-                }
+            data['activity_meta'] = {
+                'id': activityObject.pk,
+                'uri': activityObject.uri,
+                'meta': activityObject._meta,
+                #'url': reverse(f'admin:{activityObject._meta.app_label}_{activityObject._meta.model_name}_change',  args=[activityObject.pk])
+            }
             if fediverse.id == apobject.get('attributedTo'):
                 data['can_update'] = True
         else:
-            if delActivity:
+            if delActivity or data['deleted']:
                 raise Http404(f'Status {rpath} was deleted.')
             elif 'url' in apobject and apobject['url'] and apobject['url'] != apobject['id']:
                 return redirect(apobject['url'])
@@ -1112,6 +1113,29 @@ class Status(View):
         
         # return redirect(reversepath('status', rpath))
         return JsonResponse({'alert': f'Delete activity sent.', 'activity': activity});
+    
+    async def patch(self, request, rpath):
+        '''Sends "undo delete" activity to federated network'''
+        if not await request_user_is_staff(request):
+            raise PermissionDenied
+        
+        proto = request_protocol(request)
+        object_uri = f'{proto}://{request.site.domain}{reversepath("status", rpath)}'
+        fediverse = fediverse_factory(request)
+        activity = await Activity.get_note_activity(object_uri, fediverse)
+        if not activity:
+            return JsonResponse({'alert': f'Activity for {object_uri} not found'}, status_code=404)
+        
+        activity = await activity.get_dict()
+        
+        async with aiohttp.ClientSession() as session:
+            await fediverse.http_session(session)
+            ## FIXME should also send requests to mentioned instances
+            activity = await fediverse.undelete_status(activity)
+            await save_activity(request, activity)
+        
+        # return redirect(reversepath('status', rpath))
+        return JsonResponse({'alert': f'Undelete activity sent.', 'activity': activity});
 
 class Interact(View):
     async def get(self, request):

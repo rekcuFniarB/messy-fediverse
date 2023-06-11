@@ -20,6 +20,12 @@
                 if (event.target.dataset.method) {
                     requestParams.method = event.target.dataset.method.toUpperCase();
                 }
+                for (let field of event.target.elements) {
+                    // Button can override request method if has value like data-method="PATCH"
+                    if (field.type == 'submit' && field.dataset.method) {
+                        requestParams.method = field.dataset.method.toUpperCase();
+                    }
+                }
                 
                 var formParams;
                 if (requestParams.method == 'GET') {
@@ -95,7 +101,7 @@
                 return result;
             }.bind(messyFediverse); // onFormSubmit
             
-            messyFediverse.clicksHandler = function(event) {
+            messyFediverse.clickEventHandler = function(event) {
                 if (event.target.closest('button.reply-js')) {
                     return this.replyToComment(event);
                 }
@@ -111,7 +117,33 @@
                         return this[eTarget.dataset.action](event);
                     }
                 }
-            }.bind(messyFediverse); // clicksHandler
+            }.bind(messyFediverse); // clickEventHandler
+            
+            messyFediverse.changeEventHandler = function(event) {
+                let input = event.target.closest('input');
+                if (!input) return false;
+                if (input.type == 'checkbox') {
+                    if (input.dataset.toggle) {
+                        return this.toggleDisplay(input.dataset.toggle, input.checked);
+                    }
+                }
+            }.bind(messyFediverse);
+            
+            messyFediverse.anyEventHandler = function(event) {
+                if (event.type && typeof this[`${event.type}EventHandler`] === 'function') {
+                    return this[`${event.type}EventHandler`](event);
+                }
+            }.bind(messyFediverse);
+            
+            messyFediverse.toggleDisplay = function(selector, display) {
+                for (let element of document.querySelectorAll(selector)) {
+                    if (display) {
+                        element.classList.remove('d-none');
+                    } else {
+                        element.classList.add('d-none');
+                    }
+                }
+            }.bind(messyFediverse);
             
             messyFediverse.togglePreview = function(event) {
                 const form = event.target.closest('form');
@@ -289,9 +321,10 @@
             }.bind(messyFediverse);
             
             messyFediverse.addEventListener('submit', messyFediverse.onFormSubmit);
-            messyFediverse.addEventListener('click', messyFediverse.clicksHandler);
+            messyFediverse.addEventListener('click', messyFediverse.anyEventHandler);
             for (let event of ['input', 'change', 'paste']) {
                 messyFediverse.addEventListener(event, messyFediverse.cacheFormInput);
+                messyFediverse.addEventListener(event, messyFediverse.anyEventHandler);
             }
             messyFediverse.updateContent();
         }

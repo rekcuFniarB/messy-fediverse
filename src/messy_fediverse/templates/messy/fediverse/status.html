@@ -6,7 +6,7 @@
     <header>
         {% if deleted %}
             <div>
-                <a href="{% url deleted.meta|admin_urlname:'change' deleted.id %}" class="badge badge-danger" data-uri="{{ deleted.uri }}">Deleted</a>
+                <span class="badge badge-danger">Deleted</>
             </div>
         {% endif %}
         
@@ -41,17 +41,31 @@
     {% endautoescape %}
     
     {% if request.user.is_staff %}
-        <form action="{% url 'messy-fediverse:status' rpath %}" method="post" data-method="delete">
+        <form action="{% url 'messy-fediverse:status' rpath %}" method="post">
             {% csrf_token %}
-            <button type="submit" name="delete" value="{{ activity.id }}">Delete</button>
-            
-            {% if can_update %}
-                <a href="{% url 'messy-fediverse:interact' %}?acct={{ object.id | urlencode }}&amp;edit=1">Edit</a>
-            {% endif %}
+            <div class="_btn-group">
+                <button type="submit" name="delete" data-method="delete" value="{{ activity.id }}" class="btn btn-danger">Delete</button>
+                
+                {% if deleted %}
+                    <button type="submit" name="undelete" data-method="patch" value="{{ activity.id }}" class="btn btn-info">Undelete</button>
+                {% endif %}
+                
+                {% if can_update %}
+                    <a href="{% url 'messy-fediverse:interact' %}?acct={{ object.id | urlencode }}&amp;edit=1" class="btn btn-success">Edit</a>
+                {% endif %}
+                
+                {% if activity_meta %}
+                    <a href="{% url activity_meta.meta|admin_urlname:'change' activity_meta.id %}" class="btn btn-warning" data-uri="{{ activity_meta.uri }}" data-no-ajax>Admin edit</a>
+                {% endif %}
+                
+                <label class="m-1"><input type="checkbox" class="" data-toggle="#activity-raw-code"><span class="p-1">View raw</span></label>
+            </div>
         </form>
-    
-        <h3>Raw</h3>
-        <code><pre>{{ raw_json }}</pre></code>
+        
+        <div id="activity-raw-code" class="mt-1 d-none">
+            <h3>Raw</h3>
+            <code><pre>{{ raw_json }}</pre></code>
+        </div>
     {% endif %}
 </article>
 

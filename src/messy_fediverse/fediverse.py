@@ -787,6 +787,25 @@ class Fediverse:
         await self.federate(activity)
         return activity
     
+    async def undelete_status(self, activity):
+        '''
+        Sends Tombstone activity to federated instances.
+        Returns activity dict.
+        '''
+        
+        apobject = activity.get('object', {});
+        if type(apobject) is dict:
+            apobject['type_was'] = apobject.get('type')
+            apobject['type'] = 'Tombstone'
+        
+        activity = self.activity(type='Undo', object=apobject)
+        await self.federate(activity)
+        apobject['type'] = apobject['type_was']
+        if apobject['type'] == 'Tombstone':
+            apobject['type'] = 'Note'
+        
+        return activity
+    
     def sign(self, url, headers):
         '''
         Make fediverse signature.

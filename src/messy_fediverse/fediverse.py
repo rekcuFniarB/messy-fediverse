@@ -657,6 +657,7 @@ class Fediverse:
         if activity_type == 'Update' and type(replyToObj) is dict:
             data = replyToObj
             data.update({
+                'url': kwargs.get('url') or data.get('url') or data.get('id'),
                 'content': kwargs.get('content'),
                 'source': kwargs.get('content'),
                 'sensitive': bool(kwargs.get('sensitive')),

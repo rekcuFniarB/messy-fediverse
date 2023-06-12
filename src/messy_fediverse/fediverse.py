@@ -42,6 +42,9 @@ class Fediverse:
     def __getattr__(self, name):
         return self.__user__.get(name, None)
     
+    def is_internal_uri(self, uri):
+        return urlparse(uri).hostname == urlparse(self.id).hostname
+    
     def get_request_trace_config(self, enabled=False):
         '''
         https://docs.aiohttp.org/en/stable/client_advanced.html#client-tracing
@@ -227,11 +230,11 @@ class Fediverse:
         data = None
         cache_key = self.mk_cache_key(url)
         
-        if self.__cache__ is not None and urlparse(cache_key).hostname != urlparse(self.id).hostname:
+        if self.__cache__ is not None and not self.is_internal_uri(cache_key):
             data = await sync_to_async(self.__cache__.get)(cache_key, None)
         
         if data is None:
-            ## Retrns coroutine
+            ## Returns coroutine
             ## We don't await here because of batch requests gathered at once
             result = self.get(url, session, *args, **kwargs)
             self.stderrlog('NO CACHE FOR', cache_key)

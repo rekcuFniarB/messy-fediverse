@@ -139,6 +139,9 @@ def is_ajax(request):
     '''
     return request.META.get('HTTP_X_REQUESTED_WITH', '').upper() == 'XMLHTTPREQUEST'
 
+def is_url(url):
+    return url.startswith('https://') or url.startswith('http://')
+
 def request_protocol(request):
     proto = 'http'
     if request.is_secure():
@@ -548,7 +551,7 @@ class Replies(View):
         
         rpath = rpath.lstrip('/')
         
-        if not rpath.startswith('http://') and not rpath.startswith('https://'):
+        if not is_url(rpath):
             ## legacy method
             _data['replies'] = await fediverse_factory(request).get_replies(rpath, content=content)
             context = self.parent_uri(request, rpath)
@@ -566,7 +569,7 @@ class Replies(View):
         else:
             items = Activity.objects.filter(context=context, disabled=False)
         
-        items = items.order_by('pk')
+        items = items.order_by('-pk')
         
         async for item in items:
             if item.object_uri == item.context:
@@ -595,6 +598,8 @@ class Replies(View):
             
             if toAppend not in _data['replies']:
                 _data['replies'].append(toAppend)
+                ## FIXME probably this recursion was made for some instances
+                ## which don't keep track of contexts, like misskey
                 await self.get_replies(request, item.object_uri, content, _data)
         
         return _data['replies']
@@ -611,6 +616,7 @@ class Replies(View):
                 await fediverse.http_session(session)
                 # items = await fediverse.get_replies(rpath, content=content)
                 items = await self.get_replies(request, rpath, content=content)
+                items.reverse()
             
             return ActivityResponse({
                 '@context': "https://www.w3.org/ns/activitystreams",
@@ -620,6 +626,8 @@ class Replies(View):
                 'items': items
             }, request)
         else:
+            context_root_url = reversepath('dumb', 'context').rstrip('/')
+            context = None
             async with aiohttp.ClientSession() as session:
                 await fediverse.http_session(session)
                 data = {
@@ -627,27 +635,29 @@ class Replies(View):
                     'form': ReplyForm(),
                     'summary': ''
                 }
+                data['items'].reverse()
             
-            context_root_url = reversepath('dumb', 'context').rstrip('/')
-            context = None
-            
-            for n, apobject in enumerate(data['items']):
-                if 'object' in apobject and type(apobject['object']) is dict:
-                    ## apobject is actually an activity
-                    apobject.update(apobject['object'])
-                    data['items'][n] = apobject
-                
-                if not data['summary'] and 'summary' in apobject and apobject['summary']:
-                    data['summary'] = apobject['summary']
-                
-                if apobject['published']:
-                    apobject['published'] = datetime.fromisoformat(apobject['published'].rstrip('Z'))
-                
-                if not context:
-                    if 'context' in apobject and apobject['context'].startswith(fediverse.id):
-                        context = apobject['context']
-                    elif 'conversation' in apobject and apobject['conversation'].startswith(fediverse.id):
-                        context = apobject['conversation']
+                for n, apobject in enumerate(data['items']):
+                    if 'object' in apobject and type(apobject['object']) is dict:
+                        ## apobject is actually an activity
+                        apobject.update(apobject['object'])
+                        data['items'][n] = apobject
+                    
+                    if 'authorInfo' not in apobject or not apobject['authorInfo']:
+                        if 'attributedTo' in apobject and is_url(apobject['attributedTo']):
+                            apobject['authorInfo'], = await fediverse.gather_http_responses(fediverse.aget(apobject['attributedTo'], session=session))
+                    
+                    if not data['summary'] and 'summary' in apobject and apobject['summary']:
+                        data['summary'] = apobject['summary']
+                    
+                    if apobject['published']:
+                        apobject['published'] = datetime.fromisoformat(apobject['published'].rstrip('Z'))
+                    
+                    if not context:
+                        if 'context' in apobject and fediverse.is_internal_uri(apobject['context']):
+                            context = apobject['context']
+                        elif 'conversation' in apobject and fediverse.is_internal_uri(apobject['conversation']):
+                            context = apobject['conversation']
             
             if context:
                 data['parent_path'] = '/' + urlparse(context).path.replace(context_root_url, '', 1).lstrip('/')
@@ -725,15 +735,19 @@ class Replies(View):
         
         try:
             if object_uri:
-                activity = await Activity.objects.filter(object_uri=object_uri).afirst()
-            if activity:
-                activity.disabled = True
-                await sync_to_async(activity.save)()
+                if fediverse.is_internal_uri(object_uri):
+                    statusView = Status()
+                    return await statusView.delete(request, object_uri)
+                activity = Activity.objects.filter(object_uri=object_uri)
+            if activity is not None and await activity.aexists():
+                await activity.aupdate(disabled=True)
                 result['success'] = True
+                result['aupdate'] = True
             elif object_id:
                 ## Old version fallback
                 fediverse.delete_reply(object_id)
                 result['success'] = True
+                result['old_version'] = True
             else:
                 result['error'] = 'ID required'
         except BaseException as error:
@@ -1097,7 +1111,11 @@ class Status(View):
             raise PermissionDenied
         
         proto = request_protocol(request)
-        object_uri = f'{proto}://{request.site.domain}{reversepath("status", rpath)}'
+        if is_url(rpath):
+            object_uri = rpath
+        else:
+            object_uri = f'{proto}://{request.site.domain}{reversepath("status", rpath)}'
+        
         fediverse = fediverse_factory(request)
         activity = await Activity.get_note_activity(object_uri, fediverse)
         if not activity:
@@ -1112,7 +1130,7 @@ class Status(View):
             await save_activity(request, activity)
         
         # return redirect(reversepath('status', rpath))
-        return JsonResponse({'alert': f'Delete activity sent.', 'activity': activity});
+        return JsonResponse({'alert': f'Delete activity sent.', 'activity': activity, 'success': True});
     
     async def patch(self, request, rpath):
         '''Sends "undo delete" activity to federated network'''

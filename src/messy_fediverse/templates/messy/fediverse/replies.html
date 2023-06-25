@@ -1,4 +1,5 @@
 {% extends 'messy/fediverse/base.html' %}
+{% load admin_urls %}
 
 {% block title %}{{ block.super }} {{ summary }}{% endblock title %}
 
@@ -26,6 +27,7 @@
     </form>
     
 {% for item in items %}
+    {% if item.content %}
     <article id="item-{{ item.hash }}" data-uri="{{ item.id }}" {% if request.user.is_staff %}data-local-id="{{ item.localId }}"{% endif %}>
         <header>
             <a href="{{ item.attributedTo }}" rel="author noopener" target="_blank">@{{ item.authorInfo.preferredUsername }}</a>
@@ -69,14 +71,17 @@
         
         <footer>
             {% if request.user.is_staff %}
-                <a href="{% url 'messy-fediverse:interact' %}?acct={{ item.id }}"><button class="reply">Reply</button></a>
+                <a href="{% url 'messy-fediverse:interact' %}?acct={{ item.id }}"><button class="btn btn-success reply">Reply</button></a>
                 
-                <button class="delete delete-js">Delete</button>
+                <button class="btn btn-danger delete delete-js">Delete</button>
+                
+                <a href="{% url item.meta|admin_urlname:'change' item.pk %}" data-no-ajax class="btn btn-default">Admin</a>
             {% else %}
-                <button class="reply reply-js">Reply</button>
+                <button class="btn btn-success reply reply-js">Reply</button>
             {% endif %}
         </footer>
     </article>
+    {% endif %}
 {% endfor %}
 </section>
 

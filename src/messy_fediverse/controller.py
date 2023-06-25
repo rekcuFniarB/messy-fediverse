@@ -44,7 +44,14 @@ class ActivityResponse(JsonResponse):
             if accept.startswith('application/') and 'json' in accept:
                 content_type = accept
         
-        super().__init__(data, content_type=content_type)
+        super().__init__(
+            data,
+            content_type=content_type,
+            json_dumps_params={
+                ## Ignore non serializable
+                'default': lambda x: None
+            }
+        )
 
 
 sentinel = object()
@@ -546,30 +553,35 @@ class Replies(View):
         if _data is None:
             _data = {
                 'replies': [],
-                'contexts': []
+                'contexts': set() ## to keep track of processed contexts
             }
         
         rpath = rpath.lstrip('/')
+        context = rpath
+        if not is_url(rpath):
+            context = self.parent_uri(request, rpath)
+        
+        if context in _data['contexts']:
+            ## Already done
+            return _data['replies']
         
         if not is_url(rpath):
             ## legacy method
             _data['replies'] = await fediverse_factory(request).get_replies(rpath, content=content)
-            context = self.parent_uri(request, rpath)
-        else:
-            context = rpath
         
-        if context not in _data['contexts']:
-            _data['contexts'].append(context)
+        items = Activity.objects.none()
         
         selfItem = await Activity.objects.filter(object_uri=context, disabled=False).afirst()
         if selfItem and selfItem.context and selfItem.context != context:
             if selfItem.context not in _data['contexts']:
-                _data['contexts'].append(selfItem.context)
-            items = Activity.objects.filter(Q(context=context) | Q(context=selfItem.context), disabled=False)
+                _data['contexts'].add(selfItem.context)
+                items = Activity.objects.filter(Q(context=context) | Q(context=selfItem.context), disabled=False)
         else:
             items = Activity.objects.filter(context=context, disabled=False)
         
         items = items.order_by('-pk')
+        
+        _data['contexts'].add(context)
         
         async for item in items:
             if item.object_uri == item.context:
@@ -578,6 +590,8 @@ class Replies(View):
             
             if content:
                 toAppend = await item.get_dict()
+                toAppend['pk'] = item.pk
+                toAppend['meta'] = item._meta
             else:
                 toAppend = item.object_uri
             
@@ -591,9 +605,6 @@ class Replies(View):
                             apObject = reply.get('object')
                             if item.object_uri == apObject or (type(apObject) is dict and item.object_uri == apObject.get('id')):
                                 del(_data['replies'][n])
-                continue
-            
-            if item.object_uri in _data['contexts']:
                 continue
             
             if toAppend not in _data['replies']:
@@ -614,7 +625,6 @@ class Replies(View):
         if is_json_request(request):
             async with aiohttp.ClientSession() as session:
                 await fediverse.http_session(session)
-                # items = await fediverse.get_replies(rpath, content=content)
                 items = await self.get_replies(request, rpath, content=content)
                 items.reverse()
             
@@ -636,7 +646,7 @@ class Replies(View):
                     'summary': ''
                 }
                 data['items'].reverse()
-            
+                
                 for n, apobject in enumerate(data['items']):
                     if 'object' in apobject and type(apobject['object']) is dict:
                         ## apobject is actually an activity
@@ -650,7 +660,7 @@ class Replies(View):
                     if not data['summary'] and 'summary' in apobject and apobject['summary']:
                         data['summary'] = apobject['summary']
                     
-                    if apobject['published']:
+                    if 'published' in apobject and apobject['published']:
                         apobject['published'] = datetime.fromisoformat(apobject['published'].rstrip('Z'))
                     
                     if not context:

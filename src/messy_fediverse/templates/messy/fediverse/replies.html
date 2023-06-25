@@ -75,7 +75,9 @@
                 
                 <button class="btn btn-danger delete delete-js">Delete</button>
                 
-                <a href="{% url item.meta|admin_urlname:'change' item.pk %}" data-no-ajax class="btn btn-default">Admin</a>
+                {% if item.meta and item.pk %}
+                    <a href="{% url item.meta|admin_urlname:'change' item.pk %}" data-no-ajax class="btn btn-default">Admin</a>
+                {% endif %}
             {% else %}
                 <button class="btn btn-success reply reply-js">Reply</button>
             {% endif %}

@@ -382,7 +382,7 @@ async def save_activity(request, activity):
     incoming = True
     
     if type(apobject) is dict:
-        object_id = apobject.get('id', None)
+        object_id = apobject.get('id', '')
     else:
         object_id = apobject
         apobject = {}

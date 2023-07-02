@@ -1064,7 +1064,6 @@ class Status(View):
             apobject['context'] = apobject['conversation'] = apobject['id']
         
         data['deleted'] = apobject.get('type') == 'Tombstone'
-        object_uri = f'{proto}://{request.site.domain}{reversepath("status", rpath)}'
         delActivity = None
         # delActivity = await Activity.objects.filter(object_uri=object_uri, activity_type='DEL', incoming=False, actor_uri=fediverse.id).afirst()
         
@@ -1084,12 +1083,13 @@ class Status(View):
         
         if is_staff:
             data['raw_json'] = json.dumps(activity, indent=4)
-            data['activity_meta'] = {
-                'id': activityObject.pk,
-                'uri': activityObject.uri,
-                'meta': activityObject._meta,
-                #'url': reverse(f'admin:{activityObject._meta.app_label}_{activityObject._meta.model_name}_change',  args=[activityObject.pk])
-            }
+            if activityObject:
+                data['activity_meta'] = {
+                    'id': activityObject.pk,
+                    'uri': activityObject.uri,
+                    'meta': activityObject._meta,
+                    #'url': reverse(f'admin:{activityObject._meta.app_label}_{activityObject._meta.model_name}_change',  args=[activityObject.pk])
+                }
             if fediverse.id == apobject.get('attributedTo'):
                 data['can_update'] = True
         else:

@@ -1,6 +1,6 @@
 from django.conf import settings
 from django.shortcuts import render, redirect
-from django.http import JsonResponse, Http404
+from django.http import JsonResponse, Http404, HttpResponseBadRequest
 from django.core.exceptions import PermissionDenied, BadRequest
 from django.core.cache import cache
 from django.core.mail import mail_admins
@@ -1187,7 +1187,9 @@ class Interact(View):
                 fresponse = fediverse.aget(url, session=session)
                 data, = await fediverse.gather_http_responses(fresponse)
             if type(data) is not dict:
-                raise BadRequest(f'Got unexpected data from {url}: {data}')
+                if type(data) is str:
+                    data = strip_tags(data)
+                return HttpResponseBadRequest(f'<p>Got unexpected data from {url}:</p> <code><pre>{data}</pre></code>')
             
             ## If got activity
             if 'object' in data and type(data['object']) is dict:

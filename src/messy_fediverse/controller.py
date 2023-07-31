@@ -243,7 +243,9 @@ def fediverse_factory(request):
             'Referer': f'{proto}://{request.site.domain}/',
             'Content-Type': 'application/activity+json',
             'User-Agent': f'Messy Fediverse +{proto}://{request.site.domain}',
-            'Accept': 'application/activity+json, application/ld+json, application/json'
+            # 'Accept': 'application/activity+json, application/ld+json; profile="https://www.w3.org/ns/activitystreams", application/json'
+            ## Lemmy responds with html for header above
+            'Accept': 'application/activity+json'
         }
         
         user = {

@@ -27,7 +27,7 @@
     </form>
     
 {% for item in items %}
-    {% if item.content %}
+    {% if item.id %}
     <article id="item-{{ item.hash }}" data-uri="{{ item.id }}" {% if request.user.is_staff %}data-local-id="{{ item.localId }}"{% endif %}>
         <header>
             <a href="{{ item.attributedTo }}" rel="author noopener" target="_blank">@{{ item.authorInfo.preferredUsername }}</a>

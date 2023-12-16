@@ -314,29 +314,11 @@ class Fediverse:
             url = url[0]
         
         if 'json' in kwargs and type(kwargs['json']) is dict:
-            if 'object' in kwargs['json'] and 'published' in kwargs['json']['object']:
-                pub_datetime = kwargs['json']['object']['published']
-                ## Removind zulu timezone indicator from the end of string
-                if pub_datetime.endswith('Z'):
-                    pub_datetime = pub_datetime[:-1]
-                
-                request_date = datetime.fromisoformat(pub_datetime)
-                nowtime = datetime.now()
-                
-                ## more than 10 minutes
-                if nowtime.timestamp() - request_date.timestamp() > 10 * 60:
-                    request_date = nowtime
-            else:
-                request_date = datetime.now()
-            
-            if 'headers' not in kwargs:
-                kwargs['headers'] = {}
-            
             kwargs['data'] = json.dumps(kwargs['json'])
             del(kwargs['json'])
-            kwargs['headers']['Date'] = emailutils.format_datetime(request_date).replace(' -0000', ' GMT')
-            kwargs['headers']['Digest'] = 'SHA-256=' + b64encode(sha256(kwargs['data'].encode('utf-8')).digest()).decode('utf-8')
-            kwargs['headers']['Signature'] = self.sign(url, kwargs['headers'])
+        
+        ## Updates kwargs with http signature
+        self.sign_request(url, method, kwargs)
         
         ## Returns coroutine
         return getattr(session, method)(url, timeout=5.0, *args, **kwargs)
@@ -810,22 +792,41 @@ class Fediverse:
         
         return activity
     
-    def sign(self, url, headers):
+    def sign_request(self, url, method='post', request={}):
         '''
-        Make fediverse signature.
+        Make HTTP signature.
         url: string URL
-        date: string date in email format.
+        request: dict, at least should contain 'headers'.
+        Returns headers dict (also modifies request dict in place).
         '''
+        
+        request_date = datetime.now()
+        
+        if 'headers' not in request:
+            request['headers'] = {}
+        
+        if 'Date' not in request['headers']:
+            request['headers']['Date'] = emailutils.format_datetime(request_date).replace(' -0000', ' GMT')
+        
         parsed_url = urlparse(url)
-        str2sign = '\n'.join((
-            f'(request-target): post {parsed_url.path}',
+        headers = [
+            f'(request-target): {method.lower()} {parsed_url.path}',
             f'host: {parsed_url.netloc}',
-            f'date: {headers["Date"]}',
-            f'digest: {headers["Digest"]}'
-        ))
+            f'date: {request["headers"]["Date"]}'
+        ]
+        headers_to_sign = '(request-target) host date'
+        
+        if 'data' in request:
+            request['headers']['Digest'] = 'SHA-256=' + b64encode(sha256((request['data'] or '').encode('utf-8')).digest()).decode('utf-8')
+            headers.append(f'digest: {request["headers"]["Digest"]}')
+            headers_to_sign = f'{headers_to_sign} digest'
+        
+        str2sign = '\n'.join(headers)
+        
         pkey = crypto.load_privatekey(crypto.FILETYPE_PEM, self.__privkey__)
         sign = b64encode(crypto.sign(pkey, str2sign, 'sha256')).decode('utf-8')
-        return f'keyId="{self.__user__["publicKey"]["id"]}",algorithm="rsa-sha256",headers="(request-target) host date digest",signature="{sign}"'
+        request['headers']['Signature'] = f'keyId="{self.__user__["publicKey"]["id"]}",algorithm="rsa-sha256",headers="{headers_to_sign}",signature="{sign}"'
+        return request['headers']
     
     async def save_reply(self, activity):
         '''

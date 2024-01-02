@@ -26,6 +26,9 @@ class FederatedEndpoint(models.Model):
         return name + self.uri
 
 class Activity(models.Model):
+    class Meta:
+        verbose_name_plural = 'Activities'
+    
     TYPES = (
         ('',    ''),
         ('FOL', 'Follow'),

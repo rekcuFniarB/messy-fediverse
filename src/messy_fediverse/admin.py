@@ -7,6 +7,8 @@ import aiohttp
 # import asyncio
 
 class FollowerAdmin(admin.ModelAdmin):
+    raw_id_fields = ['activity']
+    
     def save_model(self, request, obj, form, change):
         '''
         Executed before model's save()

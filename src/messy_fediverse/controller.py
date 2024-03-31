@@ -27,7 +27,7 @@ import asyncio
 import aiohttp
 from .models import Activity, Follower, FederatedEndpoint
 # from .middleware import stderrlog
-from functools import partial
+# from functools import partial
 #from pprint import pprint
 
 class ActivityResponse(JsonResponse):
@@ -171,8 +171,7 @@ async def email_notice(request, activity):
     
     if is_url(ap_object):
         ## Trying to get object content
-        async with aiohttp.ClientSession() as session:
-            ap_object, = await fediverse.gather_http_responses(fediverse.aget(ap_object, session))
+        ap_object, = await fediverse.gather_http_responses(fediverse.aget(ap_object))
     
     if 'type' in ap_object:
         subj_parts = ['Fediverse', activity.get('type', ''), ap_object['type']]
@@ -184,8 +183,7 @@ async def email_notice(request, activity):
             if 'authorInfo' not in activity:
                 activity['authorInfo'] = {}
                 try:
-                    async with aiohttp.ClientSession() as session:
-                        activity['authorInfo'], = await fediverse.gather_http_responses(fediverse.aget(attributedTo, session))
+                    activity['authorInfo'], = await fediverse.gather_http_responses(fediverse.aget(attributedTo))
                 except:
                     pass
             
@@ -240,7 +238,7 @@ def fediverse_factory(request):
         headers = {
             'Referer': f'{proto}://{request.site.domain}/',
             'Content-Type': 'application/activity+json',
-            'User-Agent': f'Messy Fediverse +{proto}://{request.site.domain}',
+            'User-Agent': f'Messy Fediverse (+{proto}://{request.site.domain})',
             # 'Accept': 'application/activity+json, application/ld+json; profile="https://www.w3.org/ns/activitystreams", application/json'
             ## Lemmy responds with html for header above
             'Accept': 'application/activity+json'
@@ -314,7 +312,7 @@ def fediverse_factory(request):
             privkey=settings.MESSY_FEDIVERSE['PRIVKEY'],
             pubkey=settings.MESSY_FEDIVERSE['PUBKEY'],
             datadir=settings.MESSY_FEDIVERSE.get('DATADIR', settings.MEDIA_ROOT),
-            debug=settings.DEBUG
+            debug=settings.DEBUG or settings.MESSY_FEDIVERSE.get('DEBUG', False)
         )
     
     __cache__['fediverse'].federated_endpoints = FederatedEndpoint.objects.filter(disabled=False)
@@ -435,9 +433,7 @@ async def save_activity(request, activity):
             ## If follow request
             follower = await Follower.objects.filter(uri=act.actor_uri, object_uri=object_id).afirst()
             ## Retrieving actor info from the net
-            ## Getting existing session
-            session = await fediverse.http_session()
-            actorInfo, = await fediverse.gather_http_responses(fediverse.aget(act.actor_uri, session=session))
+            actorInfo, = await fediverse.gather_http_responses(fediverse.aget(act.actor_uri))
             ## If actor info is valid
             endpoint_url = None
             if type(actorInfo) is dict:
@@ -480,7 +476,7 @@ async def save_activity(request, activity):
                         actor=fediverse.id
                     )
                     response, = await fediverse.gather_http_responses(
-                        fediverse.post(actorInfo['inbox'], session, json=acceptActivity)
+                        fediverse.post(actorInfo['inbox'], session=None, json=acceptActivity)
                     )
                     acceptActivity['_response'] = response
                     ## Saving outgoing too
@@ -623,10 +619,8 @@ class Replies(View):
         fediverse = fediverse_factory(request)
         
         if is_json_request(request):
-            async with aiohttp.ClientSession() as session:
-                await fediverse.http_session(session)
-                items = await self.get_replies(request, rpath, content=content)
-                items.reverse()
+            items = await self.get_replies(request, rpath, content=content)
+            items.reverse()
             
             return ActivityResponse({
                 '@context': "https://www.w3.org/ns/activitystreams",
@@ -638,36 +632,34 @@ class Replies(View):
         else:
             context_root_url = reversepath('dumb', 'context').rstrip('/')
             context = None
-            async with aiohttp.ClientSession() as session:
-                await fediverse.http_session(session)
-                data = {
-                    'items': await self.get_replies(request, rpath, content=True),
-                    'form': ReplyForm(),
-                    'summary': ''
-                }
-                data['items'].reverse()
+            data = {
+                'items': await self.get_replies(request, rpath, content=True),
+                'form': ReplyForm(),
+                'summary': ''
+            }
+            data['items'].reverse()
+            
+            for n, apobject in enumerate(data['items']):
+                if 'object' in apobject and type(apobject['object']) is dict:
+                    ## apobject is actually an activity
+                    apobject.update(apobject['object'])
+                    data['items'][n] = apobject
                 
-                for n, apobject in enumerate(data['items']):
-                    if 'object' in apobject and type(apobject['object']) is dict:
-                        ## apobject is actually an activity
-                        apobject.update(apobject['object'])
-                        data['items'][n] = apobject
-                    
-                    if 'authorInfo' not in apobject or not apobject['authorInfo']:
-                        if 'attributedTo' in apobject and is_url(apobject['attributedTo']):
-                            apobject['authorInfo'], = await fediverse.gather_http_responses(fediverse.aget(apobject['attributedTo'], session=session))
-                    
-                    if not data['summary'] and 'summary' in apobject and apobject['summary']:
-                        data['summary'] = apobject['summary']
-                    
-                    if 'published' in apobject and apobject['published']:
-                        apobject['published'] = datetime.fromisoformat(apobject['published'].rstrip('Z'))
-                    
-                    if not context:
-                        if 'context' in apobject and fediverse.is_internal_uri(apobject['context']):
-                            context = apobject['context']
-                        elif 'conversation' in apobject and fediverse.is_internal_uri(apobject['conversation']):
-                            context = apobject['conversation']
+                if 'authorInfo' not in apobject or not apobject['authorInfo']:
+                    if 'attributedTo' in apobject and is_url(apobject['attributedTo']):
+                        apobject['authorInfo'], = await fediverse.gather_http_responses(fediverse.aget(apobject['attributedTo']))
+                
+                if not data['summary'] and 'summary' in apobject and apobject['summary']:
+                    data['summary'] = apobject['summary']
+                
+                if 'published' in apobject and apobject['published']:
+                    apobject['published'] = datetime.fromisoformat(apobject['published'].rstrip('Z'))
+                
+                if not context:
+                    if 'context' in apobject and fediverse.is_internal_uri(apobject['context']):
+                        context = apobject['context']
+                    elif 'conversation' in apobject and fediverse.is_internal_uri(apobject['conversation']):
+                        context = apobject['conversation']
             
             if context:
                 data['parent_path'] = '/' + urlparse(context).path.replace(context_root_url, '', 1).lstrip('/')
@@ -700,8 +692,7 @@ class Replies(View):
                 
                 username, host = form.cleaned_data['account'].split('@')
                 
-                async with aiohttp.ClientSession() as session:
-                    webfinger, = await fediverse.gather_http_responses(fediverse.aget(f'https://{host}/.well-known/webfinger?resource=acct:{form.cleaned_data["account"]}', session=session))
+                webfinger, = await fediverse.gather_http_responses(fediverse.aget(f'https://{host}/.well-known/webfinger?resource=acct:{form.cleaned_data["account"]}'))
                 
                 if type(webfinger) is dict and 'links' in webfinger and type(webfinger['links']) is list:
                     for link in webfinger['links']:
@@ -724,9 +715,7 @@ class Replies(View):
                 else:
                     return redirect(link_template.format(uri=form.cleaned_data['uri']))
             else:
-                async with aiohttp.ClientSession() as session:
-                    await fediverse.http_session(session)
-                    items = await self.get_replies(request, rpath, content=True)
+                items = await self.get_replies(request, rpath, content=True)
                 return await self.render_page(request, rpath, {'items': items, 'form': form})
     
         else:
@@ -779,23 +768,20 @@ class Inbox(View):
         if is_post_json(request):
             data = json.loads(request.body)
             fediverse = fediverse_factory(request)
-            async with aiohttp.ClientSession() as session:
-                await fediverse.http_session(session)
-                
-                if 'requestMeta' not in data:
-                    data['requestMeta'] = {}
-                for k in request.META:
-                    if k.startswith('HTTP_'):
-                        data['requestMeta'][k] = request.META[k]
-                
-                # result = await fediverse.process_object(data)
-                # data['_json'] = result
-                if 'actor' in data and 'authorInfo' not in data and 'authorInfo' not in data.get('object', {}):
-                    data['authorInfo'], = await fediverse.gather_http_responses(fediverse.aget(data['actor'], session))
-                
-                should_log_request = False
-                saveResult = save_activity(request, data)
-                tasks.append(saveResult)
+            if 'requestMeta' not in data:
+                data['requestMeta'] = {}
+            for k in request.META:
+                if k.startswith('HTTP_'):
+                    data['requestMeta'][k] = request.META[k]
+            
+            # result = await fediverse.process_object(data)
+            # data['_json'] = result
+            if 'actor' in data and 'authorInfo' not in data and 'authorInfo' not in data.get('object', {}):
+                data['authorInfo'], = await fediverse.gather_http_responses(fediverse.aget(data['actor']))
+            
+            should_log_request = False
+            saveResult = save_activity(request, data)
+            tasks.append(saveResult)
             
             if 'type' in data and data['type'] == 'Delete':
                 should_log_request = False
@@ -829,9 +815,7 @@ class Following(View):
             raise PermissionDenied
         
         fediverse = fediverse_factory(request)
-        async with aiohttp.ClientSession() as session:
-            await fediverse.http_session(session)
-            data = {'following': fediverse.get_following()}
+        data = {'following': fediverse.get_following()}
         
         for item in data['following']:
             item['fediverseInstance'] = urlparse(item['id']).hostname
@@ -849,12 +833,10 @@ class Following(View):
         fediverse = fediverse_factory(request)
         
         result = None
-        async with aiohttp.ClientSession() as session:
-            await fediverse.http_session(session)
-            if request.POST.get('follow', None):
-                result = await fediverse.follow(user_id)
-            elif request.POST.get('unfollow', None):
-                result = await fediverse.unfollow(user_id)
+        if request.POST.get('follow', None):
+            result = await fediverse.follow(user_id)
+        elif request.POST.get('unfollow', None):
+            result = await fediverse.unfollow(user_id)
         
         return redirect(reverse('interact') + '?' + urlencode({'acct': user_id}))
 
@@ -1133,11 +1115,9 @@ class Status(View):
         
         activity = await activity.get_dict()
         
-        async with aiohttp.ClientSession() as session:
-            await fediverse.http_session(session)
-            ## FIXME should also send requests to mentioned instances
-            activity = await fediverse.delete_status(activity)
-            await save_activity(request, activity)
+        ## FIXME should also send requests to mentioned instances
+        activity = await fediverse.delete_status(activity)
+        await save_activity(request, activity)
         
         # return redirect(reversepath('status', rpath))
         return JsonResponse({'alert': f'Delete activity sent.', 'activity': activity, 'success': True});
@@ -1156,11 +1136,9 @@ class Status(View):
         
         activity = await activity.get_dict()
         
-        async with aiohttp.ClientSession() as session:
-            await fediverse.http_session(session)
-            ## FIXME should also send requests to mentioned instances
-            activity = await fediverse.undelete_status(activity)
-            await save_activity(request, activity)
+        ## FIXME should also send requests to mentioned instances
+        activity = await fediverse.undelete_status(activity)
+        await save_activity(request, activity)
         
         # return redirect(reversepath('status', rpath))
         return JsonResponse({'alert': f'Undelete activity sent.', 'activity': activity});
@@ -1182,10 +1160,8 @@ class Interact(View):
         }
         
         if url:
-            async with aiohttp.ClientSession() as session:
-                #await fediverse.http_session(session)
-                fresponse = fediverse.aget(url, session=session)
-                data, = await fediverse.gather_http_responses(fresponse)
+            fresponse = fediverse.aget(url)
+            data, = await fediverse.gather_http_responses(fresponse)
             if type(data) is not dict:
                 if type(data) is str:
                     data = strip_tags(data)
@@ -1224,18 +1200,17 @@ class Interact(View):
             
             ## Getting users info
             tasks = []
-            async with aiohttp.ClientSession() as session:
-                for user_id in user_ids:
-                    if type(user_id) is str:
-                        tasks.append(fediverse.aget(user_id, session=session))
-                    elif type(user_id) is list:
-                        ## Peertube?
-                        for item in user_id:
-                            if type(item) is str:
-                                tasks.append(fediverse.aget(item, session=session))
-                            elif type(item) is dict and 'id' in item:
-                                tasks.append(fediverse.aget(item['id'], session=session))
-                tasks = await fediverse.gather_http_responses(*tasks)
+            for user_id in user_ids:
+                if type(user_id) is str:
+                    tasks.append(fediverse.aget(user_id))
+                elif type(user_id) is list:
+                    ## Peertube?
+                    for item in user_id:
+                        if type(item) is str:
+                            tasks.append(fediverse.aget(item))
+                        elif type(item) is dict and 'id' in item:
+                            tasks.append(fediverse.aget(item['id']))
+            tasks = await fediverse.gather_http_responses(*tasks)
             
             for user_obj in tasks:
                 ## If is user object
@@ -1288,50 +1263,47 @@ class Interact(View):
             
             ## do processing
             fediverse = fediverse_factory(request)
-            async with aiohttp.ClientSession() as session:
-                await fediverse.http_session(session)
+            ## If we are replying
+            if 'link' in form.cleaned_data and form.cleaned_data['link']:
+                ap_object, = await fediverse.gather_http_responses(fediverse.aget(form.cleaned_data['link']))
+                #ap_object = cache.get(form.cleaned_data['link'], sentinel)
+                if ap_object is sentinel:
+                    raise BadRequest(f'Object "{form.cleaned_data["link"]}" has been lost, try again.')
+                if type(ap_object) is not dict:
+                    stderrlog('DEBUG', 'GOT NON DICT FROM CACHE:', form.cleaned_data['link'], ap_object)
+                    raise BadRequest(f'God bad ap_object from remote {form.cleaned_data["link"]} or cache: {ap_object}')
+            
+            if ap_object:
+                if 'type' in ap_object and ap_object['type'] == 'Person':
+                    #and form.cleaned_data['reply_direct']:
+                    ## It'a a direct message FIXME
+                    person_to_reply = ap_object
+                    ## Preparing source
+                    ap_object = {
+                        'attributedTo': person_to_reply['id'],
+                        'attributedToPerson': person_to_reply
+                    }
+                if form.cleaned_data['reply_direct']:
+                    ap_object['id'] = form.cleaned_data['reply_direct']
+                    ap_object['directMessage'] = True
+                if form.cleaned_data['context']:
+                    ap_object['context'] = form.cleaned_data['context']
                 
-                ## If we are replying
-                if 'link' in form.cleaned_data and form.cleaned_data['link']:
-                    ap_object, = await fediverse.gather_http_responses(fediverse.aget(form.cleaned_data['link'], session=session))
-                    #ap_object = cache.get(form.cleaned_data['link'], sentinel)
-                    if ap_object is sentinel:
-                        raise BadRequest(f'Object "{form.cleaned_data["link"]}" has been lost, try again.')
-                    if type(ap_object) is not dict:
-                        stderrlog('DEBUG', 'GOT NON DICT FROM CACHE:', form.cleaned_data['link'], ap_object)
-                        raise BadRequest(f'God bad ap_object from remote {form.cleaned_data["link"]} or cache: {ap_object}')
-                
-                if ap_object:
-                    if 'type' in ap_object and ap_object['type'] == 'Person':
-                        #and form.cleaned_data['reply_direct']:
-                        ## It'a a direct message FIXME
-                        person_to_reply = ap_object
-                        ## Preparing source
-                        ap_object = {
-                            'attributedTo': person_to_reply['id'],
-                            'attributedToPerson': person_to_reply
-                        }
-                    if form.cleaned_data['reply_direct']:
-                        ap_object['id'] = form.cleaned_data['reply_direct']
-                        ap_object['directMessage'] = True
-                    if form.cleaned_data['context']:
-                        ap_object['context'] = form.cleaned_data['context']
-                    
-                    if ap_object.get('attributedTo') == fediverse.id and request.POST.get('update'):
-                        ## updating
-                        activity_type = 'Update'
-                
-                # def callback(request, data, *args, **kwargs):
-                #     loop.create_task(save_activity(request, data.get('activity')))
-                
-                data['activity'], task = await fediverse.new_status(
-                    activity_type=activity_type,
-                    replyToObj=ap_object,
-                    # on_federate_done=partial(callback, request, data),
-                    **form.cleaned_data
-                )
-                ## To schedule later after response done.
-                add_task(request, task)
+                if ap_object.get('attributedTo') == fediverse.id and request.POST.get('update'):
+                    ## updating
+                    activity_type = 'Update'
+            
+            # def callback(request, data, *args, **kwargs):
+            #     loop.create_task(save_activity(request, data.get('activity')))
+            
+            data['activity'], task = await fediverse.new_status(
+                activity_type=activity_type,
+                replyToObj=ap_object,
+                # on_federate_done=partial(callback, request, data),
+                **form.cleaned_data
+            )
+            ## To schedule later after response done.
+            add_task(request, task)
             
             if 'activity' in data and data['activity']:
                 ## FIXME This became a little bit messy

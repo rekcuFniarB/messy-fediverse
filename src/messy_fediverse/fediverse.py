@@ -3,6 +3,7 @@ import aiohttp
 import asyncio
 from os import path
 from datetime import datetime
+from random import random
 import json
 from urllib.parse import urlparse
 from email import utils as emailutils
@@ -15,6 +16,8 @@ import sys
 from functools import partial
 from asgiref.sync import sync_to_async, async_to_sync
 from . import html
+import atexit
+from functools import partial
 
 class Fediverse:
     __tasks__ = set()
@@ -38,6 +41,10 @@ class Fediverse:
         '''Removing finished task'''
         print('TASK DONE', task, cls.__tasks__, file=sys.stderr, flush=True)
         cls.__tasks__.discard(task)
+    
+    @staticmethod
+    def is_response_error(response=None):
+        return (type(response) is str and response.startswith('ERROR:')) or isinstance(response, BaseException)
     
     def __getattr__(self, name):
         return self.__user__.get(name, None)
@@ -97,8 +104,15 @@ class Fediverse:
             config.append(trace_config)
         return config
     
-    def uniqid(self):
-        return hex(int(str(datetime.now().timestamp()).replace('.', '')))[2:]
+    @staticmethod
+    def uniqid():
+        '''
+        Generated random hex string based on current timestamp
+        '''
+        return (
+            hex(int(str(datetime.now().timestamp()).replace('.', '')))[2:]
+            + hex(int(random() * 1000000000))
+        )
     
     def syslog(self, *msg):
         if self.__DEBUG__:
@@ -210,18 +224,21 @@ class Fediverse:
             result = path.os.unlink(filepath)
         return result
     
-    async def http_session(self, session=None):
-        if not hasattr(self, '__http_session__'):
-            setattr(self, '__http_session__', None)
-        
-        if session is not None:
-            if self.__http_session__ is not None and not self.__http_session__.closed:
-                await self.__http_session__.close()
-            self.__http_session__ = session
-        elif self.__http_session__ is None or self.__http_session__.closed:
-            self.__http_session__ = aiohttp.ClientSession()
-        
-        return self.__http_session__
+    @property
+    def _session(self):
+        loop = asyncio.get_running_loop()
+        if not hasattr(loop, '__http_session__') or loop.__http_session__.closed:
+            self.stderrlog('NEW HTTP SESSION')
+            ## Well, not the best place to store it but it works
+            loop.__http_session__ = aiohttp.ClientSession()
+            
+            def cleanup():
+                self.stderrlog('CLOSING HTTP SESSION')
+                ## session.close() returns coroutine, should be awaited
+                loop.run_until_complete(loop.__http_session__.close())
+            
+            atexit.register(cleanup)
+        return loop.__http_session__
     
     async def aget(self, url, session=None, *args, **kwargs):
         '''
@@ -254,10 +271,6 @@ class Fediverse:
         Making request to specified URL.
         Requests are cached if a cache object was passed to constructor.
         '''
-        
-        # if session is None:
-        #     session = self.http_session()
-        
         return self.request(url, session, method='get', *args, **kwargs)
     
     def post(self, url, session=None, *args, **kwargs):
@@ -266,21 +279,7 @@ class Fediverse:
         url: string URL
         Accepts same args as requests's module "post" method.
         '''
-        
-        # if session is None:
-        #     session = self.http_session()
-        
         return self.request(url, session, method='post', *args, **kwargs)
-    
-    async def arequest(self, url, session, method='get', *args, **kwargs):
-        self.stderrlog('NO SESSION', url, session)
-        ## FIXME workaround if session is unexpectedly closed
-        ## This actually hapens in controller.postprocess_tasks()
-        if session is None or session.closed:
-            async with aiohttp.ClientSession() as session:
-                return await self.request(url, session, method, *args, **kwargs)
-        else:
-            return await self.request(url, session, method, *args, **kwargs)
     
     def request(self, url, session, method='get', *args, **kwargs):
         '''
@@ -292,13 +291,8 @@ class Fediverse:
         Returns coroutine
         '''
         
-        if session is None:
-            ## Maybe created earlier, trying to reuse
-            session = getattr(self, '__http_session__', None)
-        
-        ## FIXME workaround if session is unexpectedly closed
         if session is None or session.closed:
-            return self.arequest(url, session, method, *args, **kwargs)
+            session = self._session
         
         if self.__headers__ is not None:
             headers = self.__headers__.copy()
@@ -325,7 +319,7 @@ class Fediverse:
     
     def is_coroutine(self, something):
         ## FIXME it's very stupid way, there is asyncio.iscoroutine
-        return str(something).startswith('<coroutine object ')
+        return asyncio.iscoroutine(something) or str(something).startswith('<coroutine object ')
     
     def mkcoroutine(self, result=None):
         '''
@@ -348,9 +342,7 @@ class Fediverse:
             return tasks
         
         return_exceptions = True ## not self.__DEBUG__
-        # loop = asyncio.get_running_loop()
         urls = []
-        #tasks = await asyncio.gather(*tasks, return_exceptions=return_exceptions)
         tasks = await asyncio.gather(*tasks, return_exceptions=return_exceptions)
         if all([asyncio.iscoroutine(x) for x in tasks]):
             ## Probably all are results of self.aget()
@@ -379,7 +371,8 @@ class Fediverse:
                     #self.syslog(f'BAD RESPONSE FOR POST TO URL "{response.url}": "{response_text}"')
                     response.raise_for_status()
                 except BaseException as e:
-                    e.args = (*e.args, f'URL: {response.url}', response_text[:128])
+                    e.args = (*e.args, response.status, f'URL: {response.url}',
+                        response_text[:128], f'TS: {datetime.now()}')
                     result = self.mkcoroutine(e)
             elif 'content-type' in response.headers and 'application/' in response.headers['content-type'] and 'json' in response.headers['content-type']:
                 ## FIXME Probably try/catch will not work here
@@ -406,8 +399,14 @@ class Fediverse:
         
         for n, result in enumerate(tasks):
             if isinstance(result, BaseException):
-                ## We return exception as string FIXME
-                tasks[n] = str(result) + ' ' + str(result.args[1:])
+                ## We return exception as string FIXME for debugging
+                errors = [repr(result)]
+                tasks[n] = 'ERROR: %s' % repr(result)
+                for a in result.args:
+                    a = str(a)
+                    if a and a not in tasks[n]:
+                        tasks[n] = f'{tasks[n]}, {a}'
+            
             elif type(result) is dict:
                 ## FIXME why is it here?
                 if 'type' in result and result['type'] == 'Person':
@@ -568,7 +567,8 @@ class Fediverse:
                     activity['object']['cc'].append(user['id'])
         
         results = []
-        activity['endpointsResults'] = []
+        activity['endpointsResults'] = {}
+        activity['failedRequests'] = {}
         
         # loop = asyncio.get_running_loop()
         # start_ts = loop.time()
@@ -579,11 +579,32 @@ class Fediverse:
         results = await self.gather_http_responses(*results)
         
         for n, result in enumerate(results):
-            activity['endpointsResults'].append((endpoints[n], result))
+            if self.__DEBUG__:
+                activity['endpointsResults'][endpoints[n]] = result
+            if self.is_response_error(result):
+                activity['failedRequests'][endpoints[n]] = result
         
         ## For debug
-        activity['requestEndpoints'] = endpoints
+        if self.__DEBUG__:
+            activity['requestEndpoints'] = endpoints
         
+        return activity
+    
+    async def resend_failed_activity(self, activity):
+        '''
+        Resend requests if activity has some requests failed
+        '''
+        old_results = activity.get('failedRequests', {})
+        urls = tuple(old_results.keys())
+        results = []
+        for url in urls:
+            results.append(self.post(url, json=activity))
+        results = await self.gather_http_responses(*results)
+        failed_requests = {}
+        for n, result in enumerate(results):
+            if self.is_response_error(result):
+                failed_requests[urls[n]] = result
+        activity['failedRequests'] = failed_requests
         return activity
     
     def activity(self, **activity_upd):

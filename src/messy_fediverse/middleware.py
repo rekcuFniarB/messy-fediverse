@@ -14,10 +14,13 @@ from datetime import datetime
 from django.utils.decorators import sync_and_async_middleware
 import aiohttp
 from asgiref.sync import async_to_sync
+from asgiref.sync import iscoroutinefunction, markcoroutinefunction
+from functools import wraps
 
 def stderrlog(*msg):
     if settings.DEBUG or 'debug' in msg or 'DEBUG' in msg:
         print(*msg, file=sys.stderr, flush=True)
+
 
 class StdErrLogAllRequests:
     '''
@@ -164,18 +167,22 @@ class WrapIntoStatus:
         
         return response
 
-@sync_and_async_middleware
+# @sync_and_async_middleware
 class VerifySignature:
     '''
     Verifying signature
     '''
+    async_capable = True
+    sync_capable = False
     
     def __init__(self, get_response):
         self.get_response = get_response
+        if iscoroutinefunction(self.get_response):
+            markcoroutinefunction(self)
     
-    def __call__(self, request):
+    async def __call__(self, request):
         ## Calling next middleware or view if no errors above
-        return self.get_response(request)
+        return await self.get_response(request)
     
     async def process_view(self, request, view_func, view_args, view_kwargs):
         ## Whe check only views which have csrf_exempt because only those views
@@ -200,15 +207,15 @@ class VerifySignature:
             
             actor = None
             fediverse = fediverse_factory(request)
-            async with aiohttp.ClientSession() as session:
-                try:
-                    actor, = await fediverse.gather_http_responses(fediverse.aget(signature['keyId'], session=session))
-                except BaseException as e:
-                    if settings.DEBUG:
-                        ## Raise original exception (probably HTTPError)
-                        raise e
-                    else:
-                        raise PermissionDenied(*e.args)
+            
+            try:
+                actor, = await fediverse.gather_http_responses(fediverse.aget(signature['keyId']))
+            except BaseException as e:
+                if settings.DEBUG:
+                    ## Raise original exception (probably HTTPError)
+                    raise e
+                else:
+                    raise PermissionDenied(*e.args)
             
             if type(actor) is not dict:
                 return self.response_error(request, f'Actor verify failed: {type(actor)} {actor}')

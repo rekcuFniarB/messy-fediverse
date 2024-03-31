@@ -111,7 +111,7 @@ class Fediverse:
         '''
         return (
             hex(int(str(datetime.now().timestamp()).replace('.', '')))[2:]
-            + hex(int(random() * 1000000000))
+            + hex(int(random() * 1000000000))[2:]
         )
     
     def syslog(self, *msg):

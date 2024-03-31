@@ -147,7 +147,7 @@ def is_ajax(request):
     return request.META.get('HTTP_X_REQUESTED_WITH', '').upper() == 'XMLHTTPREQUEST'
 
 def is_url(url):
-    return url.startswith('https://') or url.startswith('http://')
+    return type(url) is str and (url.startswith('https://') or url.startswith('http://'))
 
 def request_protocol(request):
     proto = 'http'
@@ -165,13 +165,11 @@ async def email_notice(request, activity):
     ap_object = activity.get('object', {})
     fediverse = fediverse_factory(request)
     
-    if (
-        type(ap_object) is str and
-        (
-            ap_object.startswith('http://') or
-            ap_object.startswith('https://')
-        )
-    ):
+    if 'actor' in activity and 'relay' in activity['actor']:
+        ## FIXME quickfix, temporarily ignoring relayed messages
+        return False
+    
+    if is_url(ap_object):
         ## Trying to get object content
         async with aiohttp.ClientSession() as session:
             ap_object, = await fediverse.gather_http_responses(fediverse.aget(ap_object, session))

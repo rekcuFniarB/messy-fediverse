@@ -21,6 +21,7 @@ from functools import partial
 
 class Fediverse:
     __tasks__ = set()
+    __sessions__ = set()
     
     def __init__(self, user, privkey, pubkey, headers=None, datadir='/tmp', cache=None, debug=False):
         '''
@@ -226,19 +227,48 @@ class Fediverse:
     
     @property
     def _session(self):
-        loop = asyncio.get_running_loop()
-        if not hasattr(loop, '__http_session__') or loop.__http_session__.closed:
-            self.stderrlog('NEW HTTP SESSION')
-            ## Well, not the best place to store it but it works
-            loop.__http_session__ = aiohttp.ClientSession()
-            
-            def cleanup():
-                self.stderrlog('CLOSING HTTP SESSION')
-                ## session.close() returns coroutine, should be awaited
-                loop.run_until_complete(loop.__http_session__.close())
-            
-            atexit.register(cleanup)
-        return loop.__http_session__
+        session = None
+        to_discard = set()
+        nowts = datetime.now().timestamp()
+        for s in self.__sessions__:
+            if not hasattr(s, 'ts_created') or nowts - s.ts_created > 120 or s.closed or s._loop.is_closed() or not s._loop.is_running():
+                ## Discard old or closed sessions
+                to_discard.add(s)
+            else:
+                session = s
+        
+        if not session:
+            ## No session to reuse, creating new
+            session = aiohttp.ClientSession()
+            session.ts_created = nowts
+            # session.discarded_sessions = to_discard
+            if not hasattr(session, 'tasks'):
+                session.tasks = set()
+            self.__sessions__.add(session)
+        
+        for s in to_discard:
+            self.__sessions__.discard(s)
+            ## Well, we need to await it somehow, but it's sync function
+            # session.tasks.add(asyncio.create_task(s.close()))
+            session.tasks.add(asyncio.create_task(self.__close_session__(s)))
+        
+        return session
+    
+    @staticmethod
+    async def __close_session__(session):
+        close_fail = False
+        try:
+            await session.close()
+        except BaseException as e:
+            close_fail = True
+        if close_fail:
+            ## Never happened
+            try:
+                loop = asyncio.get_running_loop()
+                session._loop = loop
+                await session.close()
+            except BaseException as e:
+                pass
     
     async def aget(self, url, session=None, *args, **kwargs):
         '''

@@ -29,3 +29,18 @@
     display: flex;
     justify-content: space-between;
 }
+.wiki-icon {
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: contain;
+    border: 0;
+}
+.wiki-icon-share {
+    /* CC0 https://commons.wikimedia.org/wiki/File:Ethics_of_Open_Sharing_icon_-_Collaboration.svg */
+    background-image: url(https://upload.wikimedia.org/wikipedia/commons/0/0d/Ethics_of_Open_Sharing_icon_-_Collaboration.svg);
+}
+.wiki-icon-thumbup {
+    /* Licensed under the Creative Commons Attribution-Share Alike 3.0 Unported license. https://commons.wikimedia.org/wiki/File:Thumbs-up-icon-left.svg */
+    background-image: url(https://upload.wikimedia.org/wikipedia/commons/9/9e/Thumbs-up-icon-left.svg);
+}
+

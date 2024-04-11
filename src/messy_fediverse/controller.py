@@ -1253,7 +1253,7 @@ class Interact(View):
         result = None
         ap_object = None
         form_is_valid = form.is_valid()
-        activity_type = 'Create'
+        activity_type = request.POST.get('activity_type', 'Create')
         
         if form_is_valid:
             # loop = asyncio.get_running_loop()
@@ -1305,16 +1305,25 @@ class Interact(View):
             ## To schedule later after response done.
             add_task(request, task)
             
-            if 'activity' in data and data['activity']:
-                ## FIXME This became a little bit messy
-                redirect_path = data['activity']['object']['id']
-                context = data['activity']['object'].get('context', data['activity']['object'].get('conversation', None))
-                if context and context.startswith(fediverse.id):
-                    context = urlparse(context).path
-                    redirect_path = context.replace(reversepath('dumb', 'context'), '').strip('/')
-                    redirect_path = reversepath('replies', redirect_path)
-                
-                await save_activity(request, data['activity'])
+            redirect_path = None
+            
+            if data['activity']:
+                if type(data['activity'].get('object')) is dict:
+                    ## FIXME This became a little bit messy
+                    if data['activity']['object'].get('id', '').startswith(fediverse.id):
+                        redirect_path = data['activity']['object']['id']
+                    context = data['activity']['object'].get('context', data['activity']['object'].get('conversation', None))
+                    if context and context.startswith(fediverse.id):
+                        context = urlparse(context).path
+                        redirect_path = context.replace(reversepath('dumb', 'context'), '').strip('/')
+                        redirect_path = reversepath('replies', redirect_path)
+                    
+                    ## FIXME isn't it saved above by create_task()?
+                    #await save_activity(request, data['activity'])
+                elif data['activity'].get('object', '').startswith(fediverse.id):
+                    redirect_path = data['activity']['object']
+            
+            if redirect_path:
                 return redirect(redirect_path)
         
         data['form'] = form

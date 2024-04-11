@@ -42,10 +42,12 @@
     {% endautoescape %}
     </div>
 
-    <br><br>
-    <h2>Post status</h2>
-
     <form method="post" action=".">
+        {% include './part.actions.html' %}
+        
+        <br><br>
+        <h2>Post status</h2>
+        
         {% csrf_token %}
 
         {{ form.as_p }}

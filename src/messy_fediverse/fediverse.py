@@ -672,6 +672,9 @@ class Fediverse:
             for k in ('to', 'cc', 'actor'):
                 if k not in activity_upd:
                     activity['object'][k] = activity[k]
+            if activity['type'] not in ('Create', 'Update', 'Delete'):
+                ## We don't need to send entire object, just an uri instead
+                activity['object'] = activity['object'].get('inReplyTo')
         
         return activity
     
@@ -700,6 +703,7 @@ class Fediverse:
                 "attachment": []
             })
         else:
+            ## Creating new
             data = {
                 'type': kwargs.get('type', 'Note'),
                 'attributedTo': self.id,
@@ -750,7 +754,7 @@ class Fediverse:
                         data['attachment'].append(tag)
         
         ## If we are replying to some status
-        if type(replyToObj) is dict and activity_type == 'Create':
+        if type(replyToObj) is dict and activity_type != 'Update':
             attributedTo = replyToObj.get('attributedTo')
             
             ## Use context of source if exists

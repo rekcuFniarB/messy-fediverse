@@ -47,13 +47,18 @@
                         return alert('Fill all required fields.');
                     }
                     
-                    if (!!input.name && !!input.value) {
+                    if (!!input.name && !!input.value && input.type != 'submit') {
                         formParams.set(input.name, input.value);
                         if (input.name.toLowerCase().indexOf('csrf') > -1) {
                             // Sending also as header for methods like DELETE
                             requestParams.headers['X-CSRFToken'] = input.value;
                         }
                     }
+                }
+                
+                if (event.submitter && event.submitter.name && event.submitter.value) {
+                    // Which button caused submit
+                    formParams.set(event.submitter.name, event.submitter.value);
                 }
                 
                 this.loading();
@@ -274,9 +279,9 @@
                 }
                 
                 var rawJson = this.querySelector('script[type="application/json"]');
-                if (!!rawJson) {
+                if (!!rawJson && rawJson.innerHTML.trim()) {
                     try {
-                        this.activityData = JSON.parse(rawJson.innerHTML);
+                        this.activityData = JSON.parse(rawJson.innerHTML.trim());
                     } catch (e) {
                         console.error('JSON PARSE ERROR:', e);
                         this.activityData = {};

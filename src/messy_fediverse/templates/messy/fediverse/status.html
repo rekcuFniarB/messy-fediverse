@@ -2,11 +2,13 @@
 {% load admin_urls %}
 
 {% block main %}
+
+{% if object %}
 <article class="messy-fediverse messy-fediverse-status">
     <header>
         {% if deleted %}
             <div>
-                <span class="badge badge-danger">Deleted</>
+                <span class="badge badge-danger">Deleted</span>
             </div>
         {% endif %}
         
@@ -68,6 +70,10 @@
         </div>
     {% endif %}
 </article>
+
+{% else %}
+<p class="fediverse-awaiting-post">Loading, click <a href="">here</a> if it takes too long.</p>
+{% endif %}
 
 <section id="messy-fediverse-status-comments"></section>
 {% endblock %}

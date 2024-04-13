@@ -70,6 +70,10 @@
                     
                     var contentType = response.headers.get('content-type');
                     if (contentType.indexOf('text/html') === 0) {
+                        if (response.url) {
+                            // In case of redirects
+                            window.history.replaceState(window.history.state || {}, '', response.url);
+                        }
                         return response.text();
                     }
                     else if (contentType.indexOf('text/plain') === 0) {
@@ -272,9 +276,19 @@
                 if (!!content) {
                     var newContent = document.createElement('div');
                     newContent.innerHTML = content;
-                    newContent = newContent.querySelector(`#${this.id}`);
-                    if (!!newContent) {
-                        this.innerHTML = newContent.innerHTML;
+                    for (let section of newContent.querySelectorAll('[id]')) {
+                        section = section.closest('[id]');
+                        if (section.id) {
+                            domSection = document.getElementById(section.id);
+                            if (domSection) {
+                                domSection.innerHTML = section.innerHTML;
+                                for (attr of section.attributes) {
+                                    if (attr.name) {
+                                        domSection.setAttribute(attr.name, attr.value);
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
                 
@@ -297,6 +311,16 @@
                             }
                         }
                     }
+                }
+                
+                let awaitLink = this.querySelector('.fediverse-awaiting-post a');
+                if (awaitLink) {
+                    let url = new URL(awaitLink);
+                    let delay = parseInt(url.searchParams.get('delay') || 81);
+                    delay *= 3
+                    url.searchParams.set('delay', delay);
+                    awaitLink.href = url.toString();
+                    setTimeout(awaitLink.click.bind(awaitLink), delay);
                 }
             }.bind(messyFediverse);
             

@@ -149,6 +149,21 @@ def is_ajax(request):
 def is_url(url):
     return type(url) is str and (url.startswith('https://') or url.startswith('http://'))
 
+def normalize_url(url):
+    '''
+    Normalizes url.
+    url: string
+    returns string.
+    '''
+    if '?' in url:
+        qs_parts = url.split('?')
+        ## Fixing if "?" appears multiple times
+        url = '&'.join(qs_parts).replace('&', '?', 1)
+        qs_parts = url.split('&')
+        qs_parts = tuple(filter(lambda x: x, qs_parts))
+        url = '&'.join(qs_parts)
+    return url
+
 def request_protocol(request):
     proto = 'http'
     if request.is_secure():
@@ -1019,6 +1034,7 @@ def webfinger(request):
 #@method_decorator(csrf_exempt, name='dispatch')
 class Status(View):
     async def get(self, request, rpath):
+        template = 'messy/fediverse/status.html'
         proto = request_protocol(request)
         object_uri = f'{proto}://{request.site.domain}{reversepath("status", rpath)}'
         data = {}
@@ -1026,6 +1042,16 @@ class Status(View):
         activityObject = await Activity.get_note_activity(object_uri, fediverse)
         
         if not activityObject:
+            if request.GET.get('from', '') == 'new_status':
+                ## request.auser() was added in django 5.0
+                request_user = await sync_to_async(lambda r: (bool(r.user), r.user)[1])(request)
+                if request_user.is_authenticated:
+                    data['await'] = True
+                    ## Redirected from new post, may be not savet yet
+                    ## due to asyncronous mode, showing blank page
+                    ## and waiting for post to appear
+                    return render(request, template, data)
+            
             filepath = fediverse.normalize_file_path(f'{request.path.strip("/")}.json')
             
             if not path.isfile(filepath):
@@ -1092,7 +1118,7 @@ class Status(View):
         data['object'] = apobject
         data['rpath'] = rpath
         
-        return render(request, 'messy/fediverse/status.html', data)
+        return render(request, template, data)
         #raise Http404(f'Status {path} not found.')
     
     async def delete(self, request, rpath):
@@ -1324,7 +1350,7 @@ class Interact(View):
                     redirect_path = data['activity']['object']
             
             if redirect_path:
-                return redirect(redirect_path)
+                return redirect(normalize_url(redirect_path + '?from=new_status'))
         
         data['form'] = form
         return render(request, 'messy/fediverse/interact.html', data)

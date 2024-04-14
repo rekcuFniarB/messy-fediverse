@@ -1,6 +1,17 @@
 {% if id %}
 <div>
-    <button type="submit" name="activity_type" value="Announce" class="btn btn-default wiki-icon wiki-icon-share" title="Boost">&nbsp;</button>
-    <button type="submit" name="activity_type" value="Like" class="btn btn-default wiki-icon wiki-icon-thumbup" title="Like">&nbsp;</button>
+    {% if done_actions.ANN %}
+        <input type="hidden" name="undo_activity" value="{{ done_actions.ANN.uri }}">
+        <button type="submit" name="activity_type" value="Undo" class="btn btn-warning wiki-icon wiki-icon-share" title="Undo boost">&nbsp;</button>
+    {% else %}
+        <button type="submit" name="activity_type" value="Announce" class="btn btn-default wiki-icon wiki-icon-share" title="Boost">&nbsp;</button>
+    {% endif %}
+    
+    {% if done_actions.LKE %}
+        <input type="hidden" name="undo_activity" value="{{ done_actions.LKE.uri }}">
+        <button type="submit" name="activity_type" value="Undo" class="btn btn-warning wiki-icon wiki-icon-thumbup" title="Undo like">&nbsp;</button>
+    {% else %}
+        <button type="submit" name="activity_type" value="Like" class="btn btn-default wiki-icon wiki-icon-thumbup" title="Like">&nbsp;</button>
+    {% endif %}
 </div>
 {% endif %}

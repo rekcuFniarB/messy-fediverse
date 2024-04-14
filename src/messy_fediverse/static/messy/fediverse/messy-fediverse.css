@@ -29,6 +29,17 @@
     display: flex;
     justify-content: space-between;
 }
+
+.messy-fediverse-form-interact {
+    display: flex;
+}
+.messy-fediverse-form-interact label {
+    display: none;
+}
+.messy-fediverse-form-interact p {
+    margin-right: 1em;
+}
+
 .wiki-icon {
     background-repeat: no-repeat;
     background-position: center;

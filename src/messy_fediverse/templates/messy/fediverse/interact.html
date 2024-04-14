@@ -4,10 +4,10 @@
 <div id="messy-fediverse-interact">
     <h2>Interact</h2>
     
-    <form method="get" action=".">
+    <form method="get" action="." class="messy-fediverse-form-interact">
         {{ search_form.as_p }}
         
-        <input type="submit" value="Search">
+        <p><input type="submit" value="Search" class="btn btn-default"></p>
     </form>
     
     {% if publicKey %}
@@ -53,13 +53,13 @@
         {{ form.as_p }}
         
         <p>
-            <input type="button" value="Preview" data-action="togglePreview">
+            <input type="button" value="Preview" data-action="togglePreview" class="btn btn-default">
             
             {% if can_update %}
                 <input type="hidden" name="update" value="1">
-                <input type="submit" value="Update">
+                <input type="submit" value="Update" class="btn btn-success">
             {% else %}
-                <input type="submit" value="Send">
+                <input type="submit" value="Send" class="btn btn-success">
             {% endif %}
         </p>
     </form>

@@ -672,7 +672,7 @@ class Fediverse:
             for k in ('to', 'cc', 'actor'):
                 if k not in activity_upd:
                     activity['object'][k] = activity[k]
-            if activity['type'] not in ('Create', 'Update', 'Delete'):
+            if activity['type'] not in ('Create', 'Update', 'Delete', 'Undo'):
                 ## We don't need to send entire object, just an uri instead
                 activity['object'] = activity['object'].get('inReplyTo')
         
@@ -689,22 +689,16 @@ class Fediverse:
         '''
         
         now = datetime.now()
+        data = {
+            'tag': [],
+            'attachment': []
+        }
+        if type(replyToObj) is dict:
+            data.update(replyToObj)
         
-        if activity_type == 'Update' and type(replyToObj) is dict:
-            data = replyToObj
-            data.update({
-                'url': kwargs.get('url') or data.get('url') or data.get('id'),
-                'content': kwargs.get('content'),
-                'source': kwargs.get('content'),
-                'sensitive': bool(kwargs.get('sensitive')),
-                'summary': kwargs.get('summary'),
-                'updated': now.isoformat() + 'Z',
-                'tag': [],
-                "attachment": []
-            })
-        else:
+        if activity_type == 'Create':
             ## Creating new
-            data = {
+            data.update({
                 'type': kwargs.get('type', 'Note'),
                 'attributedTo': self.id,
                 'inReplyTo': kwargs.get('inReplyTo') or None,
@@ -714,7 +708,7 @@ class Fediverse:
                 'summary': kwargs.get('summary'),
                 'tag': [],
                 "attachment": []
-            }
+            })
             
             uniqid = self.uniqid()
             datepath = now.date().isoformat().replace('-', '/')
@@ -730,14 +724,26 @@ class Fediverse:
             #"context":"tag:mastodon.ml,2022-05-21:objectId=9633346:objectType=Conversation",
             #"conversation": "tag:mastodon.ml,2022-05-21:objectId=9633346:objectType=Conversation",
             data['context'] = data['conversation'] = data['id']
+        else:
+            if activity_type == 'Update' and type(replyToObj) is dict:
+                data.update({
+                    'url': kwargs.get('url') or data.get('url') or data.get('id'),
+                    'content': kwargs.get('content'),
+                    'source': kwargs.get('content'),
+                    'sensitive': bool(kwargs.get('sensitive')),
+                    'summary': kwargs.get('summary'),
+                    'updated': now.isoformat() + 'Z',
+                    'tag': [],
+                    "attachment": []
+                })
         
         ## If content language defined
         if 'language' in kwargs and kwargs['language']:
             if 'contentMap' not in data or data['contentMap'] is not dict:
                 data['contentMap'] = {}
-            data['contentMap'][kwargs['language']] = data['content']
+            data['contentMap'][kwargs['language']] = data.get('content', '')
         
-        tasks = [self.parse_tags(data['content'])]
+        tasks = [self.parse_tags(data.get('content', ''))]
         if 'tags' in kwargs:
             tasks.append(self.parse_tags(kwargs['tags']))
         

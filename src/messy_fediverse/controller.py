@@ -11,7 +11,7 @@ from django.utils.decorators import method_decorator
 from django.templatetags.static import static as _staticurl
 from django.utils.html import strip_tags
 from django.forms.models import model_to_dict
-from django.db.models import Q
+from django.db.models import Q, Exists, OuterRef
 from .forms import InteractForm, InteractSearchForm, ReplyForm
 from .fediverse import Fediverse
 from . import html
@@ -1175,8 +1175,8 @@ class Interact(View):
             raise PermissionDenied
         
         form_textarea_content = []
-        url = request.GET.get('acct', None)
-        #if not url:
+        acct = request.GET.get('acct', None)
+        #if not acct:
         #    raise BadRequest('What to interact with?')
         
         fediverse = fediverse_factory(request)
@@ -1185,25 +1185,46 @@ class Interact(View):
             'can_update': False
         }
         
-        if url:
-            fresponse = fediverse.aget(url)
+        if acct:
+            fresponse = fediverse.aget(acct)
             data, = await fediverse.gather_http_responses(fresponse)
             if type(data) is not dict:
                 if type(data) is str:
                     data = strip_tags(data)
-                return HttpResponseBadRequest(f'<p>Got unexpected data from {url}:</p> <code><pre>{data}</pre></code>')
+                return HttpResponseBadRequest(f'<p>Got unexpected data from {acct}:</p> <code><pre>{data}</pre></code>')
             
             ## If got activity
             if 'object' in data and type(data['object']) is dict:
-                data = data['object']
+                data.update(data['object'])
             
             data.update(data_settings)
         
-        if 'url' not in data and 'id' in data:
-            data['url'] = data['id']
-        
         if 'id' in data:
+            if 'url' not in data:
+                data['url'] = data['id']
             data['fediverseInstance'] = urlparse(data['id']).hostname
+            ## Getting our likes and boosts we did, will be used for undo buttons
+            undo_activities = Activity.objects.filter(
+                activity_type='UND',
+                object_uri=OuterRef('uri'),
+                actor_uri=data.get('actor', fediverse.id),
+                disabled=False
+            )
+            related_actions = (Activity.objects.values('activity_type', 'uri')
+                .filter(
+                    ~Exists(undo_activities),
+                    object_uri=data['id'],
+                    disabled=False,
+                    incoming=False,
+                    actor_uri=data.get('actor', fediverse.id)
+                )
+                .values('activity_type', 'uri', 'object_uri')
+                .distinct()
+                # .order_by('-pk')
+            )
+            data['done_actions'] = {}
+            async for action in related_actions:
+                data['done_actions'][action['activity_type']] = action
         
         ## If is an user profile
         if 'publicKey' in data:
@@ -1264,12 +1285,12 @@ class Interact(View):
             data['context'] = get_context
         
         data['form'] = InteractForm(initial={
-            'link': url,
+            'link': acct,
             'content': ' '.join(form_textarea_content),
             'reply_direct': data['replyDirect'],
             'context': data.get('context', '')
         })
-        data['search_form'] = InteractSearchForm(initial={'acct': url})
+        data['search_form'] = InteractSearchForm(initial={'acct': acct})
         
         return render(request, 'messy/fediverse/interact.html', data)
     
@@ -1280,8 +1301,12 @@ class Interact(View):
         ap_object = None
         form_is_valid = form.is_valid()
         activity_type = request.POST.get('activity_type', 'Create')
+        uri_interact = None
         
         if form_is_valid:
+            if 'link' in form.cleaned_data and form.cleaned_data['link']:
+                uri_interact = form.cleaned_data['link']
+            
             # loop = asyncio.get_running_loop()
             # loop.set_debug(True)
             ## setting to one second to debug slow requests
@@ -1289,8 +1314,19 @@ class Interact(View):
             
             ## do processing
             fediverse = fediverse_factory(request)
+            
+            if activity_type == 'Undo':
+                undo_activity_uri = request.POST.get('undo_activity')
+                if undo_activity_uri:
+                    activity_to_undo = await Activity.objects.filter(uri=undo_activity_uri, actor_uri=fediverse.id).aget()
+                    activity_to_undo = await activity_to_undo.get_dict()
+                    if 'object' in activity_to_undo and type(activity_to_undo['object']):
+                        ap_object = {}
+                        for k in ('id', 'type', 'to', 'cc', 'object', 'actor'):
+                            ap_object[k] = activity_to_undo.get(k)
+            
             ## If we are replying
-            if 'link' in form.cleaned_data and form.cleaned_data['link']:
+            elif uri_interact:
                 ap_object, = await fediverse.gather_http_responses(fediverse.aget(form.cleaned_data['link']))
                 #ap_object = cache.get(form.cleaned_data['link'], sentinel)
                 if ap_object is sentinel:
@@ -1332,8 +1368,13 @@ class Interact(View):
             add_task(request, task)
             
             redirect_path = None
-            
             if data['activity']:
+                if (
+                    data['activity'].get('type') not in ('Create', 'Update', 'Delete')
+                    and uri_interact
+                ):
+                    return redirect(reverse('interact') + '?' + urlencode({'acct': uri_interact}))
+                
                 if type(data['activity'].get('object')) is dict:
                     ## FIXME This became a little bit messy
                     if data['activity']['object'].get('id', '').startswith(fediverse.id):

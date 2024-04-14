@@ -45,23 +45,25 @@
     <form method="post" action=".">
         {% include './part.actions.html' %}
         
-        <br><br>
-        <h2>Post status</h2>
-        
-        {% csrf_token %}
-
-        {{ form.as_p }}
-        
-        <p>
-            <input type="button" value="Preview" data-action="togglePreview" class="btn btn-default">
+        <div id="messy-fediverse-new-post-form" class="d-none">
+            <br><br>
+            <h2>Post new status</h2>
             
-            {% if can_update %}
-                <input type="hidden" name="update" value="1">
-                <input type="submit" value="Update" class="btn btn-success">
-            {% else %}
-                <input type="submit" value="Send" class="btn btn-success">
-            {% endif %}
-        </p>
+            {% csrf_token %}
+
+            {{ form.as_p }}
+            
+            <p>
+                <input type="button" value="Preview" data-action="togglePreview" class="btn btn-default">
+                
+                {% if can_update %}
+                    <input type="hidden" name="update" value="1">
+                    <input type="submit" value="Update" class="btn btn-success">
+                {% else %}
+                    <input type="submit" value="Send" class="btn btn-success">
+                {% endif %}
+            </p>
+        </div>
     </form>
     
     <div class="d-none" id="messy-fediverse-preview">
@@ -72,8 +74,12 @@
         <div class="preview"></div>
     </div>
     
+    {% if request.user.is_staff %}
+    <div id="activity-raw-code" class="d-none">
     <h3>Raw data</h3>
     <code><pre>{% autoescape off %}{{ rawJson }}{% endautoescape %}</pre></code>
+    </div>
+    {% endif %}
     
     <script type="application/json">{% autoescape off %}{{ rawJson }}{% endautoescape %}</script>
 </div>

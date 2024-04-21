@@ -39,10 +39,9 @@ class ActivityResponse(JsonResponse):
         data.update(_data)
         
         if request:
-            ## Return content type they want
-            accept = request.META.get('HTTP_ACCEPT', '').lower().split(',')[0].split(';')[0]
-            if accept.startswith('application/') and 'json' in accept:
-                content_type = accept
+            accept_header = request.META.get('HTTP_ACCEPT', '').lower()
+            if content_type not in accept_header and 'application/ld+json' in accept_header:
+                content_type = 'application/ld+json; profile="https://www.w3.org/ns/activitystreams"'
         
         super().__init__(
             data,
@@ -134,7 +133,7 @@ def staticurl(request, path):
 def is_json_request(request):
     '''Check if client wants JSON'''
     accept = request.META.get('HTTP_ACCEPT', '').lower()
-    return 'application/json' in accept or 'application/activity+json' in accept or 'application/ld+json' in accept
+    return 'application/' in accept and 'json' in accept
 
 def is_post_json(request):
     '''Check if request posts json'''
@@ -957,7 +956,7 @@ class OrderedItemsView(View):
                 ## Has next page
                 data['next'] = f'{uri}?page={nextPageId}'
         
-        return ActivityResponse(data)
+        return ActivityResponse(data, request)
 
 class Followers(OrderedItemsView):
     model = Follower

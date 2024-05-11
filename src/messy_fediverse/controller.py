@@ -29,6 +29,7 @@ from .models import Activity, Follower, FederatedEndpoint
 # from .middleware import stderrlog
 # from functools import partial
 #from pprint import pprint
+import traceback
 
 class ActivityResponse(JsonResponse):
     def __init__(self, _data, request=None):
@@ -219,10 +220,10 @@ async def email_notice(request, activity):
             {url}
             <br>
             <h2>Raw data:</h2>
-            <code><pre>{json.dumps(activity, indent=4)}</pre></code>
+            <pre><code>{json.dumps(activity, indent=4)}</code></pre>
             
             <h2>Request debug info:</h2>
-            <code><pre>
+            <pre><code>
             GET: {request.META['QUERY_STRING']}
             
             POST: {request.POST.__str__()}
@@ -233,7 +234,7 @@ async def email_notice(request, activity):
             </code></pre>
         '''
         
-        return mail_admins(
+        return await sync_to_async(mail_admins)(
             subject=strip_tags(' '.join(subj_parts))[:80].replace('\n', '').replace('\r', ''),
             fail_silently=not settings.DEBUG,
             message=strip_tags(message),
@@ -441,7 +442,34 @@ async def save_activity(request, activity):
             await sync_to_async(act.self_json.save)('activity.json', content=ContentFile(json.dumps(activity)), save=False)
             await sync_to_async(act.self_json.close)()
         
-        await sync_to_async(act.save)()
+        try:
+            await sync_to_async(act.save)()
+        except BaseException as e:
+            trace_msg = traceback.format_exc()
+            
+            message=f'''<pre><code>{trace_msg}</code></pre><br>
+                <br>
+                <h2>Activity:</h2>
+                <pre><code>{json.dumps(activity, indent=4)}</code></pre>
+                
+                <h2>Request debug info:</h2>
+                <pre><code>
+                GET: {request.META['QUERY_STRING']}
+                
+                POST: {request.POST.__str__()}
+                
+                META: {request.META.__str__()}
+                
+                BODY: {request.body.decode('utf-8', 'replace')}
+                </code></pre>
+            '''
+            
+            await sync_to_async(mail_admins)(
+                subject=f'ERROR: failed to save activity: {e}',
+                fail_silently=not settings.DEBUG,
+                message=strip_tags(message),
+                html_message=message
+            )
         
         if actType == 'FOL':
             ## If follow request

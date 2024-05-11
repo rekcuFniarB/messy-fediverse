@@ -387,7 +387,7 @@ class Fediverse:
             
             result = None
             
-            if not hasattr(response, 'headers') and not hasattr(response, 'ok'):
+            if not hasattr(response, 'headers') or not hasattr(response, 'ok'):
                 ## Not a respone object. May be a dict from cache or exception
                 result = self.mkcoroutine(response)
             elif not response.ok:

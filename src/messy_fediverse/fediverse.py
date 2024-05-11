@@ -347,11 +347,13 @@ class Fediverse:
         ## Returns coroutine
         return getattr(session, method)(url, timeout=5.0, *args, **kwargs)
     
+    @staticmethod
     def is_coroutine(self, something):
         ## FIXME it's very stupid way, there is asyncio.iscoroutine
         return asyncio.iscoroutine(something) or str(something).startswith('<coroutine object ')
     
-    def mkcoroutine(self, result=None):
+    @staticmethod
+    def mkcoroutine(result=None):
         '''
         Creates coroutine
         result: what coroutine should return
@@ -672,7 +674,7 @@ class Fediverse:
             for k in ('to', 'cc', 'actor'):
                 if k not in activity_upd:
                     activity['object'][k] = activity[k]
-            if activity['type'] not in ('Create', 'Update', 'Delete', 'Undo'):
+            if activity['type'] not in ('Create', 'Update', 'Delete', 'Undo', 'Accept'):
                 ## We don't need to send entire object, just an uri instead
                 activity['object'] = activity['object'].get('inReplyTo')
         

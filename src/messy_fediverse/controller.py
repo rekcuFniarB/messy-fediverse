@@ -72,6 +72,9 @@ def add_task(request, task):
     '''
     if 'tasks' not in __cache__:
         __cache__['tasks'] = []
+    
+    ## Ensure task is awaitable
+    task = Fediverse.mkcoroutine(task)
     __cache__['tasks'].append((request, task))
     return task
 
@@ -388,6 +391,9 @@ async def save_activity(request, activity):
     request: django HttpRequest instance
     activity: dict
     '''
+    if type(activity) is not dict or not activity.get('id') or not activity.get('type'):
+        return activity
+    
     act = None
     json_path = activity.get('_json', None)
     apobject = activity.get('object', {})
@@ -503,30 +509,15 @@ async def save_activity(request, activity):
                 follower.endpoint = endpoint
                 follower.activity = act
                 
+                tasks = []
                 if not fediverse.manuallyApprovesFollowers:
-                    apobject = {
-                        'id': activity['id'],
-                        'type': activity['type'],
-                        'actor': activity['actor'],
-                        'object': object_id
-                    }
-                    acceptActivity = fediverse.activity(
-                        type='Accept',
-                        object=apobject,
-                        to=[actorInfo['id']],
-                        inReplyTo=activity_id,
-                        actor=fediverse.id
-                    )
-                    response, = await fediverse.gather_http_responses(
-                        fediverse.post(actorInfo['inbox'], session=None, json=acceptActivity)
-                    )
-                    acceptActivity['_response'] = response
-                    ## Saving outgoing too
-                    await save_activity(request, acceptActivity)
                     follower.accepted = True
+                    tasks.append(send_accept_follow(request, follower))
                 
-                await sync_to_async(follower.save)()
-                    
+                ## FIXME Django 4.2 will have asave()
+                tasks.append(sync_to_async(follower.save)())
+                await asyncio.gather(*tasks)
+                
         ## endif 'FOL' (follow request)
         elif actType == 'UND':
             if (apobject.get('type', None) == 'Follow' and 'object' in apobject and
@@ -538,6 +529,51 @@ async def save_activity(request, activity):
     
     return act
 
+
+async def send_accept_follow(request, follower):
+    fediverse = fediverse_factory(request)
+    response = None
+    session = None
+    
+    actorInfo, = await fediverse.gather_http_responses(
+        fediverse.aget(follower.uri, session=session)
+    )
+    
+    if type(actorInfo) is not dict:
+        if isinstance(actorInfo, BaseException):
+            raise actorInfo
+        elif type(actorInfo) is str:
+            raise TypeError(actorInfo)
+        else:
+            raise TypeError('Bad actor info:', type(actorInfo), str(actorInfo))
+    
+    ## Getting activityPub object dict
+    apobject = await follower.activity.get_dict()
+    apobject = apobject.get('object', None)
+    if type(apobject) is not dict:
+        apobject = {
+            'id': follower.activity.uri,
+            'type': follower.activity.get_activity_type_display(),
+            'actor': follower.activity.actor_uri,
+            'object': follower.activity.object_uri
+        }
+    
+    acceptActivity = fediverse.activity(
+        type='Accept',
+        object=apobject,
+        to=[actorInfo['id']],
+        inReplyTo=follower.activity.uri,
+        actor=fediverse.id
+    )
+    
+    response, = await fediverse.gather_http_responses(
+        fediverse.post(actorInfo['inbox'], session, json=acceptActivity)
+    )
+    acceptActivity['_response'] = response
+    ## Saving outgoing too
+    acceptActivity = await save_activity(request, acceptActivity)
+    
+    return acceptActivity
 
 @csrf_exempt
 def featured(request, *args, **kwargs):

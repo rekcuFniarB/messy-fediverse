@@ -187,9 +187,16 @@ async def email_notice(request, activity):
         ## FIXME quickfix, temporarily ignoring relayed messages
         return False
     
+    url = None
+    
     if is_url(ap_object):
+        url = ap_object
         ## Trying to get object content
         ap_object, = await fediverse.gather_http_responses(fediverse.aget(ap_object))
+    
+    if type(ap_object) is not dict:
+        stderrlog('EMAIL NOTICE ERROR: AP object is', ap_object, 'URL:', url)
+        return False
     
     if 'type' in ap_object:
         subj_parts = ['Fediverse', activity.get('type', ''), ap_object['type']]
@@ -445,7 +452,7 @@ async def save_activity(request, activity):
             if path.isfile(json_path):
                 act.self_json.name = path.relpath(json_path, settings.MEDIA_ROOT)
         else:
-            await sync_to_async(act.self_json.save)('activity.json', content=ContentFile(json.dumps(activity)), save=False)
+            await sync_to_async(act.self_json.save)(f'{act.uniqid}.activity.json', content=ContentFile(json.dumps(activity)), save=False)
             await sync_to_async(act.self_json.close)()
         
         try:

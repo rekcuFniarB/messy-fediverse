@@ -691,10 +691,7 @@ class Fediverse:
         '''
         
         now = datetime.now()
-        data = {
-            'tag': [],
-            'attachment': []
-        }
+        data = {}
         
         if activity_type == 'Create':
             ## Creating new
@@ -706,6 +703,8 @@ class Fediverse:
                 'source': kwargs.get('content'),
                 'sensitive': bool(kwargs.get('sensitive')),
                 'summary': kwargs.get('summary'),
+                'tag': [],
+                'attachment': []
             })
             
             uniqid = self.uniqid()
@@ -732,6 +731,9 @@ class Fediverse:
                     'sensitive': bool(kwargs.get('sensitive')),
                     'summary': kwargs.get('summary'),
                     'updated': now.isoformat() + 'Z',
+                    ## Erasing tags and attachments to be recreated
+                    'tag': [],
+                    'attachment': []
                 })
         
         ## If content language defined

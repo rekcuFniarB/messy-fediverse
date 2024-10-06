@@ -4,6 +4,7 @@ from os import path
 import json
 from datetime import datetime
 from asgiref.sync import sync_to_async
+from .fediverse import Fediverse
 
 def get_upload_path(self, filename):
     '''
@@ -13,8 +14,7 @@ def get_upload_path(self, filename):
     datadir = settings.MESSY_FEDIVERSE.get('DATADIR', settings.MEDIA_ROOT)
     datadir = path.relpath(datadir, settings.MEDIA_ROOT)
     now = datetime.now()
-    uniqid = hex(int(str(now.timestamp()).replace('.', '')))[2:]
-    return path.join(datadir, 'activity', now.strftime('%Y/%m/%d'), f'{uniqid}.{filename}')
+    return path.join(datadir, 'activity', now.strftime('%Y/%m/%d'), filename)
 
 class FederatedEndpoint(models.Model):
     uri = models.URLField('URL', unique=True, null=False, blank=False)
@@ -53,6 +53,27 @@ class Activity(models.Model):
     self_json = models.FileField('Raw JSON', upload_to=get_upload_path, null=True)
     incoming = models.BooleanField('Is incoming', default=False, null=False)
     disabled = models.BooleanField('Disabled', default=False, null=False)
+    _uniqid = None
+    
+    @property
+    def uniqid(self):
+        '''
+        Get uniqid from self URI if activity is outgoing.
+        If URI is https://example.com/foo/bar/ then 'bar' is returned.
+        For incoming activities new uniqid is generated.
+        '''
+        if self.incoming:
+            if not self._uniqid:
+                self._uniqid = Fediverse.uniqid()
+            return self._uniqid
+        else:
+            return (
+                path.basename(self.uri)
+                ## If ends with slash
+                or path.basename(path.dirname(self.uri))
+                ## Fallback
+                or Fediverse.uniqid()
+            )
     
     @sync_to_async
     def get_dict(self):

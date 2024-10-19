@@ -7,8 +7,8 @@ from random import random
 import json
 from urllib.parse import urlparse
 from email import utils as emailutils
-from base64 import b64encode
-from OpenSSL import crypto
+from base64 import b64encode, b64decode
+# from OpenSSL import crypto
 from hashlib import sha256
 import re
 import syslog
@@ -18,6 +18,12 @@ from asgiref.sync import sync_to_async, async_to_sync
 from . import html
 import atexit
 from functools import partial
+# import cryptography.exceptions
+from cryptography.hazmat.backends import default_backend as crypt_backend
+from cryptography.hazmat.primitives import hashes as crypt_hashes
+from cryptography.hazmat.primitives.asymmetric import padding as crypt_padding
+from cryptography.hazmat.primitives.serialization import load_pem_public_key as crypt_load_pem_public_key
+from cryptography.hazmat.primitives import serialization as crypt_serialization
 
 class Fediverse:
     __tasks__ = set()
@@ -869,11 +875,16 @@ class Fediverse:
             request['headers']['Date'] = emailutils.format_datetime(request_date).replace(' -0000', ' GMT')
         
         parsed_url = urlparse(url)
+        parsed_url_path = parsed_url.path
+        if parsed_url.query:
+            parsed_url_path += f'?{parsed_url.query}'
+        
         headers = [
-            f'(request-target): {method.lower()} {parsed_url.path}',
+            f'(request-target): {method.lower()} {parsed_url_path}',
             f'host: {parsed_url.netloc}',
             f'date: {request["headers"]["Date"]}'
         ]
+        
         headers_to_sign = '(request-target) host date'
         
         if 'data' in request:
@@ -883,10 +894,76 @@ class Fediverse:
         
         str2sign = '\n'.join(headers)
         
-        pkey = crypto.load_privatekey(crypto.FILETYPE_PEM, self.__privkey__)
-        sign = b64encode(crypto.sign(pkey, str2sign, 'sha256')).decode('utf-8')
+        ## deprecated method
+        # pkey = crypto.load_privatekey(crypto.FILETYPE_PEM, self.__privkey__)
+        # sign = b64encode(crypto.sign(pkey, str2sign, 'sha256')).decode('utf-8')
+        ## Using this instead of deprecated method
+        sign = self.crypt_sign(str2sign, self.__privkey__).decode('utf-8')
+        
         request['headers']['Signature'] = f'keyId="{self.__user__["publicKey"]["id"]}",algorithm="rsa-sha256",headers="{headers_to_sign}",signature="{sign}"'
         return request['headers']
+
+    @staticmethod
+    def crypt_sign(payload, pkey):
+        if hasattr(payload, 'encode'):
+            ## to bytes
+            payload = payload.encode('utf-8')
+        
+        if hasattr(pkey, 'encode'):
+            ## to bytes
+            pkey = pkey.encode('utf-8')
+        
+        pkey = crypt_serialization.load_pem_private_key(
+            pkey,
+            password = None,
+            backend = crypt_backend(),
+        )
+        
+        return b64encode(
+            pkey.sign(
+                payload,
+                crypt_padding.PKCS1v15(),
+                crypt_hashes.SHA256(),
+            )
+        )
+        
+        # return b64encode(
+        #     pkey.sign(
+        #         payload,
+        #         crypt_padding.PSS(
+        #             mgf = crypt_padding.MGF1(crypt_hashes.SHA256()),
+        #             salt_length = crypt_padding.PSS.MAX_LENGTH,
+        #         ),
+        #         crypt_hashes.SHA256(),
+        #     )
+        # )
+    
+    @staticmethod
+    def crypt_verify(payload, signature, pkey):
+        signature = b64decode(signature)
+        if hasattr(pkey, 'encode'):
+            pkey = pkey.encode('utf-8')
+        if hasattr(payload, 'encode'):
+            payload = payload.encode('utf-8')
+        
+        pkey = crypt_load_pem_public_key(pkey, crypt_backend())
+        
+        return pkey.verify(
+            signature,
+            payload,
+            crypt_padding.PKCS1v15(),
+            crypt_hashes.SHA256(),
+        )
+        
+        # return pkey.verify(
+        #     signature,
+        #     payload,
+        #     crypt_padding.PSS(
+        #         mgf = crypt_padding.MGF1(crypt_hashes.SHA256()),
+        #         salt_length = crypt_padding.PKCS1v15.MAX_LENGTH,
+        #     ),
+        #     crypt_hashes.SHA256(),
+        # )
     
     async def save_reply(self, activity):
         '''

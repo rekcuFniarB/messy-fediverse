@@ -275,7 +275,7 @@ def fediverse_factory(request):
                 #"https://w3id.org/security/v1",
                 #staticurl(request, 'messy/fediverse/litepub.json'),
                 #'https://litepub.social/litepub/litepub-v0.1.jsonld',
-                'https://cloudflare-ipfs.com/ipfs/QmUt2rFamEsBxSkUd7DwE7SXr5BVxTQviGMH6Hwj9bKzTE/litepub-0.1.jsonld',
+                'https://dweb.link/ipfs/QmUt2rFamEsBxSkUd7DwE7SXr5BVxTQviGMH6Hwj9bKzTE/litepub-0.1.jsonld',
                 #f"{proto}://{request.site.domain}/schemas/litepub-0.1.jsonld",
                 {
                     "@language": "und"

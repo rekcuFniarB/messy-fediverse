@@ -5,8 +5,8 @@ from .controller import fediverse_factory, root_json, request_user_is_staff, Act
 from .models import Activity
 from django.conf import settings
 from django.urls import resolve, reverse
-from OpenSSL import crypto
-from base64 import b64decode
+from hashlib import sha256
+from base64 import b64encode, b64decode
 from .urls import app_name
 import re
 import sys
@@ -38,7 +38,7 @@ class StdErrLogAllRequests:
             stderrlog('POST DATA:', request.POST.__str__())
         stderrlog('REQUEST META:', request.META.__str__())
         stderrlog('RESPONSE:', response.__str__())
-        stderrlog('RESPONSE BODY:', response.content.decode(response.charset, errors='replace')[:256].replace('\n', ''), '...')
+        stderrlog('RESPONSE BODY:', response.content.decode(response.charset, errors='replace')[:512].replace('\n', ''), '...')
         return response
 
 class SysLog:
@@ -187,12 +187,22 @@ class VerifySignature:
     async def process_view(self, request, view_func, view_args, view_kwargs):
         ## Whe check only views which have csrf_exempt because only those views
         ## are for requests from federated instances.
-        if (request.method == 'POST' and not await request_user_is_staff(request) and
-                getattr(view_func, 'csrf_exempt', False) and request.resolver_match and request.resolver_match.app_name == app_name and
-                not settings.MESSY_FEDIVERSE.get('NO_VERIFY_SIGNATURE', False)):
+        if (
+            request.method == 'POST' and not await request_user_is_staff(request)
+            and getattr(view_func, 'csrf_exempt', False) and request.resolver_match
+            and request.resolver_match.app_name == app_name
+            and not settings.MESSY_FEDIVERSE.get('NO_VERIFY_SIGNATURE', False)
+        ):
+            digest = request.headers.get('digest')
+            if not digest:
+                return self.response_error(request, 'Digest required')
+            
+            digest = digest.replace('SHA-256=', '').replace('sha-256=', '')
+            
             signature_string = request.headers.get('signature', None)
             if not signature_string:
                 return self.response_error(request, 'Signature required')
+            
             signature = self.parse_signature(signature_string)
             
             for k in ('keyId', 'headers', 'signature'):
@@ -227,31 +237,56 @@ class VerifySignature:
             if 'id' not in actorKey or actorKey['id'] != signature['keyId']:
                 return self.response_error(request, 'Bad actor key ID')
             
-            str2sign = []
             
-            for h in signature['headers']:
-                if h == '(request-target)':
-                    v = f'post {request.path}'
-                else:
-                    v  = request.headers.get(h, '')
+            verify_errors = []
+            try_paths = []
+            if request.META.get('QUERY_STRING'):
+                try_paths.append(request.path + '?' + request.META.get('QUERY_STRING'))
+            try_paths.append(request.path)
+            
+            ## Trying to verify signature for path with query string and without
+            ## In the past path without query string was proper signature
+            ## but mastodon began to use query string for signatures at some time
+            for path in try_paths:
+                str2sign = []
+            
+                for h in signature['headers']:
+                    if h == '(request-target)':
+                        v = f'post {path}'
+                    else:
+                        v  = request.headers.get(h, '')
+                    
+                    str2sign.append(f'{h}: {v}')
                 
-                str2sign.append(f'{h}: {v}')
+                str2sign = '\n'.join(str2sign)
+                
+                try:
+                    verifyResult = fediverse.crypt_verify(str2sign, signature['signature'], actorKey.get('publicKeyPem'))
+                    if verifyResult is None:
+                        ## Signature check successful
+                        break
+                except BaseException as e:
+                    verify_errors.append(e)
             
-            str2sign = '\n'.join(str2sign)
-            x509 = crypto.X509()
-            x509.set_pubkey(crypto.load_publickey(crypto.FILETYPE_PEM, actorKey.get('publicKeyPem')))
-            try:
-                verifyResult = crypto.verify(x509, b64decode(signature['signature']), str2sign, 'sha256')
-                if verifyResult is not None:
-                    return self.response_error(request, 'Signature verification failed.')
-            except BaseException as e:
-                return self.response_error(request, e.args)
+            if len(verify_errors):
+                return self.response_error(request, verify_errors[0] or 'Signature verification failed')
+            
+            ## Checking digest
+            body_digest = b64encode(sha256(request.body).digest()).decode('utf-8')
+            if digest != body_digest:
+                return this.response_error(request, f'Bad digest, {digest} != {body_digest}')
         
         ## Continue normal process
         return None
     
-    def response_error(self, request, message):
+    @staticmethod
+    def response_error(request, message):
+        error = message
+        if hasattr(message, 'args'):
+            message = error.args
+        
         if request.content_type and 'json' in request.content_type:
+            stderrlog('DEBUG', 'RESPONSE ERROR:', error, 'REQUEST:', request, request.META)
             return JsonResponse({
                 'success': False,
                 'status': 'error',

@@ -264,12 +264,14 @@ class VerifySignature:
                     verifyResult = fediverse.crypt_verify(str2sign, signature['signature'], actorKey.get('publicKeyPem'))
                     if verifyResult is None:
                         ## Signature check successful
+                        verify_errors.clear()
                         break
                 except BaseException as e:
                     verify_errors.append(e)
             
             if len(verify_errors):
-                return self.response_error(request, verify_errors[0] or 'Signature verification failed')
+                error_text = ', '.join(map(repr, verify_errors))
+                return self.response_error(request, f'Signature verification failed: {error_text}')
             
             ## Checking digest
             body_digest = b64encode(sha256(request.body).digest()).decode('utf-8')

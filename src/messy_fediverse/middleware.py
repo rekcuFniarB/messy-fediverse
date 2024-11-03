@@ -267,6 +267,8 @@ class VerifySignature:
                         verify_errors.clear()
                         break
                 except BaseException as e:
+                    if not len(e.args):
+                        e.args = (str2sign, signature['signature'], actorKey.get('publicKeyPem'), request.META.get('HTTP_REMOTE_ADDR'), request.headers.get('user-agent'))
                     verify_errors.append(e)
             
             if len(verify_errors):

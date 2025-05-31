@@ -12,10 +12,10 @@ class MessyFediverseConfig(AppConfig):
     verbose_name = _("Messy Fediverse")
     
     def ready(self):
-        from .fediverse import Fediverse
+        from .fediverse import FediverseActor
         from .middleware import stderrlog
         from . import controller
-        selfModule.Fediverse = Fediverse
+        selfModule.FediverseActor = FediverseActor
         selfModule.stderrlog = stderrlog
         selfModule.controller = controller
         controller.stderrlog = stderrlog
@@ -23,5 +23,5 @@ class MessyFediverseConfig(AppConfig):
         request_finished.connect(self.postprocess_tasks, dispatch_uid='messy_fediverse_postprocess_tasks')
     
     def postprocess_tasks(self, sender, **kwargs):
-        ## Async signals support alread added in development version of django. Current is 4.1
+        ## Async signals support already added in development version of django. Current is 4.1
         return async_to_sync(controller.postprocess_tasks)(sender, **kwargs)

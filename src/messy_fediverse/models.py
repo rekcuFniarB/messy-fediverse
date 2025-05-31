@@ -4,7 +4,7 @@ from os import path
 import json
 from datetime import datetime
 from asgiref.sync import sync_to_async
-from .fediverse import Fediverse
+from .fediverse import FediverseActor
 
 def get_upload_path(self, filename):
     '''
@@ -64,7 +64,7 @@ class Activity(models.Model):
         '''
         if self.incoming:
             if not self._uniqid:
-                self._uniqid = Fediverse.uniqid()
+                self._uniqid = FediverseActor.uniqid()
             return self._uniqid
         else:
             return (
@@ -72,7 +72,7 @@ class Activity(models.Model):
                 ## If ends with slash
                 or path.basename(path.dirname(self.uri))
                 ## Fallback
-                or Fediverse.uniqid()
+                or FediverseActor.uniqid()
             )
     
     @sync_to_async

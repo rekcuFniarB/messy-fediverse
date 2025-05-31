@@ -25,7 +25,7 @@ from cryptography.hazmat.primitives.asymmetric import padding as crypt_padding
 from cryptography.hazmat.primitives.serialization import load_pem_public_key as crypt_load_pem_public_key
 from cryptography.hazmat.primitives import serialization as crypt_serialization
 
-class Fediverse:
+class FediverseActor:
     __tasks__ = set()
     __sessions__ = set()
     
@@ -351,12 +351,11 @@ class Fediverse:
         self.sign_request(url, method, kwargs)
         
         ## Returns coroutine
-        return getattr(session, method)(url, timeout=5.0, *args, **kwargs)
+        return getattr(session, method)(url, timeout=30.0, *args, **kwargs)
     
     @staticmethod
     def is_coroutine(self, something):
-        ## FIXME it's very stupid way, there is asyncio.iscoroutine
-        return asyncio.iscoroutine(something) or str(something).startswith('<coroutine object ')
+        return asyncio.iscoroutine(something) or asyncio.isfuture(something)
     
     @staticmethod
     def mkcoroutine(result=None):
@@ -364,7 +363,7 @@ class Fediverse:
         Creates coroutine
         result: what coroutine should return
         '''
-        if asyncio.iscoroutine(result):
+        if asyncio.iscoroutine(result) or asyncio.isfuture(result):
             return result
         else:
             async def coro(result):
@@ -382,12 +381,12 @@ class Fediverse:
         return_exceptions = True ## not self.__DEBUG__
         urls = []
         tasks = await asyncio.gather(*tasks, return_exceptions=return_exceptions)
-        if all([asyncio.iscoroutine(x) for x in tasks]):
+        if all([asyncio.iscoroutine(x) or asyncio.isfuture(x) for x in tasks]):
             ## Probably all are results of self.aget()
             return await self.gather_http_responses(*tasks)
         
         for n, response in enumerate(tasks):
-            while asyncio.iscoroutine(response):
+            while asyncio.iscoroutine(response) or asyncio.isfuture(response):
                 ## self.get() and self.aget() are mixed in one batch request?
                 response = await response
                 tasks[n] = response
@@ -686,7 +685,7 @@ class Fediverse:
         
         return activity
     
-    async def new_status(self, replyToObj=None, activity_type='Create', on_federate_done=None, **kwargs):
+    def new_note_activity(self, replyToObj=None, activity_type='Create', **kwargs):
         '''
         Create new status.
         content: string message text
@@ -748,22 +747,6 @@ class Fediverse:
                 data['contentMap'] = {}
             data['contentMap'][kwargs['language']] = data.get('content', '')
         
-        tasks = [self.parse_tags(data.get('content', ''))]
-        if 'tags' in kwargs:
-            tasks.append(self.parse_tags(kwargs['tags']))
-        
-        parse_results = await asyncio.gather(*tasks, return_exceptions=True)
-        if type(parse_results[0]) is dict:
-            data['content'] = parse_results[0].get('content')
-        for parse_result in parse_results:
-            if type(parse_result) is dict:
-                for tag in parse_result.get('tag', []):
-                    if tag not in data['tag']:
-                        data['tag'].append(tag)
-                for tag in parse_result.get('attachment', []):
-                    if tag not in data['attachment']:
-                        data['attachment'].append(tag)
-        
         ## If we are replying to some status
         if type(replyToObj) is dict and activity_type != 'Update':
             attributedTo = replyToObj.get('attributedTo')
@@ -779,51 +762,8 @@ class Fediverse:
                     if type(attr) is dict and 'type' in attr and attr['type'] == 'Person':
                         attributedTo = attr['id']
                         break
-            
-            remote_author = None
-            
-            if 'attributedToPerson' in replyToObj and type(replyToObj['attributedToPerson']) is dict:
-                remote_author = replyToObj['attributedToPerson']
-            elif attributedTo:
-                remote_author, = await self.gather_http_responses(self.aget(attributedTo))
-            
-            if attributedTo:
-                data['to'] = [
-                    "https://www.w3.org/ns/activitystreams#Public",
-                    attributedTo,
-                    self.followers
-                ]
-            
-            if remote_author:
-                remote_author_url = urlparse(remote_author['id'])
-                
-                originMention = {
-                    "href": remote_author.get('url', remote_author.get('id', None)),
-                    "name": f"@{remote_author['preferredUsername']}@{remote_author_url.hostname}",
-                    "type": "Mention"
-                }
-                ## Appending parent author to mentions if it isn't there yet
-                if (len([x for x in data['tag'] if x.get('href', None) == originMention['href'] or x.get('name', None) == originMention['name']]) == 0):
-                    data['tag'].append(originMention)
-            
-            data['inReplyTo'] = replyToObj.get('id')
-            data['directMessage'] = replyToObj.get('directMessage', False)
         
-        activity = self.activity(object=data, type=activity_type)
-        
-        ## Send mentions
-        if callable(on_federate_done):
-            loop = asyncio.get_running_loop()
-            task = loop.create_task(self.federate(activity))
-            Fediverse.__tasks__.add(task)
-            task.add_done_callback(on_federate_done)
-            task.add_done_callback(Fediverse.on_task_done)
-        else:
-            # await self.federate(activity)
-            # Fediverse.__tasks__.add(self.federate(activity))
-            task = self.federate(activity)
-        
-        return (activity, task)
+        return self.activity(object=data, type=activity_type)
     
     async def delete_status(self, activity):
         '''
@@ -841,7 +781,7 @@ class Fediverse:
     
     async def undelete_status(self, activity):
         '''
-        Sends Tombstone activity to federated instances.
+        Undelete activity
         Returns activity dict.
         '''
         
@@ -1160,3 +1100,94 @@ class Fediverse:
         '''
         filename = path.join('following', sha256(user_id.encode('utf-8')).hexdigest() + '.json')
         return self.read(filename)
+
+
+class FediverseActivity:
+    def __init__(self, actor, replyToObj=None, activity_type='Create', activity=None, **kwargs):
+        '''Activity instance.
+        actor: FediverseActor instance
+        replyToObj: dict, activity object we reply to
+            or activity object we want to modify if activity_type is Update
+        activity_type: string, 'Create' or 'Update'
+        **kwargs: other optional kwargs
+        '''
+        self.actor = actor
+        
+        if activity and type(activity) is dict:
+            self.activity = activity
+        elif activity_type in ('Create', 'Update'):
+            self.activity = actor.new_note_activity(replyToObj, activity_type, **kwargs)
+        
+        self.object = self.activity.get('object', {})
+        
+        self._init = kwargs
+        self._init.update({
+           'replyToObj':  replyToObj,
+           'activity_type': activity_type,
+        })
+        
+    async def federate(self):
+        '''Prepare activity (parsing e.t.c.) and federate'''
+        
+        tasks = [self.actor.parse_tags(self.object.get('content', ''))]
+        if 'tags' in self._init:
+            tasks.append(self.actor.parse_tags(self._init['tags']))
+        
+        parse_results = await asyncio.gather(*tasks, return_exceptions=True)
+        if type(parse_results[0]) is dict:
+            self.object['content'] = parse_results[0].get('content')
+        for parse_result in parse_results:
+            if type(parse_result) is dict:
+                for tag in parse_result.get('tag', []):
+                    if tag not in self.object['tag']:
+                        self.object['tag'].append(tag)
+                for tag in parse_result.get('attachment', []):
+                    if tag not in self.object['attachment']:
+                        self.object['attachment'].append(tag)
+        
+        ## If we are replying to some status
+        if type(self._init['replyToObj']) is dict and self._init['activity_type'] != 'Update':
+            attributedTo = self._init['replyToObj'].get('attributedTo')
+            
+            ## Use context of source if exists
+            #context = path.join(self.actor.id, 'context', urlparse(status_id).path.strip('/'), '')
+            self.object['context'] = self._init['replyToObj'].get('context', self._init['replyToObj'].get('conversation', self._init['replyToObj'].get('id')))
+            self.object['conversation'] = self.object['context']
+            ## Not all engines use context though, for example Misskey not.
+            
+            if type(attributedTo) is list:
+                for attr in attributedTo:
+                    if type(attr) is dict and 'type' in attr and attr['type'] == 'Person':
+                        attributedTo = attr['id']
+                        break
+            
+            remote_author = None
+            
+            if 'attributedToPerson' in self._init['replyToObj'] and type(self._init['replyToObj']['attributedToPerson']) is dict:
+                remote_author = self._init['replyToObj']['attributedToPerson']
+            elif attributedTo:
+                remote_author, = await self.actor.gather_http_responses(self.actor.aget(attributedTo))
+            
+            if attributedTo:
+                self.object['to'] = [
+                    "https://www.w3.org/ns/activitystreams#Public",
+                    attributedTo,
+                    self.actor.followers
+                ]
+            
+            if remote_author:
+                remote_author_url = urlparse(remote_author['id'])
+                
+                originMention = {
+                    "href": remote_author.get('url', remote_author.get('id', None)),
+                    "name": f"@{remote_author['preferredUsername']}@{remote_author_url.hostname}",
+                    "type": "Mention"
+                }
+                ## Appending parent author to mentions if it isn't there yet
+                if (len([x for x in self.object['tag'] if x.get('href', None) == originMention['href'] or x.get('name', None) == originMention['name']]) == 0):
+                    self.object['tag'].append(originMention)
+            
+            self.object['inReplyTo'] = self._init['replyToObj'].get('id')
+            self.object['directMessage'] = self._init['replyToObj'].get('directMessage', False)
+        
+        return await self.actor.federate(self.activity)

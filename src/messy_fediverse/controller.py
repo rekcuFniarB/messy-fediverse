@@ -13,7 +13,7 @@ from django.utils.html import strip_tags
 from django.forms.models import model_to_dict
 from django.db.models import Q, Exists, OuterRef
 from .forms import InteractForm, InteractSearchForm, ReplyForm
-from .fediverse import Fediverse
+from .fediverse import FediverseActor, FediverseActivity
 from . import html
 import requests
 import json
@@ -74,7 +74,7 @@ def add_task(request, task):
         __cache__['tasks'] = []
     
     ## Ensure task is awaitable
-    task = Fediverse.mkcoroutine(task)
+    task = FediverseActor.mkcoroutine(task)
     __cache__['tasks'].append((request, task))
     return task
 
@@ -330,7 +330,7 @@ def fediverse_factory(request):
             if k != k.upper():
                 user[k] = settings.MESSY_FEDIVERSE[k]
         
-        __cache__['fediverse'] = Fediverse(
+        __cache__['fediverse'] = FediverseActor(
             cache=cache,
             headers=headers,
             user=user,
@@ -1109,29 +1109,39 @@ class Status(View):
         object_uri = f'{proto}://{request.site.domain}{reversepath("status", rpath)}'
         data = {}
         fediverse = fediverse_factory(request)
-        activityObject = await Activity.get_note_activity(object_uri, fediverse)
+        activity = cache.get(object_uri, None)
+        activityObject = None
         
-        if not activityObject:
-            if request.GET.get('from', '') == 'new_status':
-                ## request.auser() was added in django 5.0
-                request_user = await sync_to_async(lambda r: (bool(r.user), r.user)[1])(request)
-                if request_user.is_authenticated:
-                    data['await'] = True
-                    ## Redirected from new post, may be not savet yet
-                    ## due to asyncronous mode, showing blank page
-                    ## and waiting for post to appear
-                    return render(request, template, data)
-            
-            filepath = fediverse.normalize_file_path(f'{request.path.strip("/")}.json')
-            
-            if not path.isfile(filepath):
-                raise Http404(f'Status {rpath} not found.')
-            
-            with open(filepath, 'rt', encoding='utf-8') as f:
-                activity = json.load(f)
-        else:
-            ## Got object from model
-            activity = await activityObject.get_dict()
+        ## If not found in cache
+        ## If cached, it's new activity and may be not saved yet
+        ## while federating
+        if not activity or type(activity) is not dict:
+            activityObject = await Activity.get_note_activity(object_uri, fediverse)
+            if not activityObject:
+                if request.GET.get('from', '') == 'new_status':
+                    ## request.auser() was added in django 5.0
+                    request_user = await sync_to_async(lambda r: (bool(r.user), r.user)[1])(request)
+                    if request_user.is_authenticated:
+                        data['await'] = True
+                        ## Redirected from new post, may be not savet yet
+                        ## due to asyncronous mode, showing blank page
+                        ## and waiting for post to appear
+                        return render(request, template, data)
+                
+                filepath = fediverse.normalize_file_path(f'{request.path.strip("/")}.json')
+                
+                if not path.isfile(filepath):
+                    raise Http404(f'Status {rpath} not found.')
+                
+                with open(filepath, 'rt', encoding='utf-8') as f:
+                    activity = json.load(f)
+            else:
+                ## Got object from model
+                activity = await activityObject.get_dict()
+        ## end if not activity
+        
+        if not activity or type(activity) is not dict:
+            raise Http404(f'Activity for {object_uri} not found.')
         
         apobject = activity
         
@@ -1189,7 +1199,6 @@ class Status(View):
         data['rpath'] = rpath
         
         return render(request, template, data)
-        #raise Http404(f'Status {path} not found.')
     
     async def delete(self, request, rpath):
         '''
@@ -1425,17 +1434,21 @@ class Interact(View):
                     ## updating
                     activity_type = 'Update'
             
-            # def callback(request, data, *args, **kwargs):
-            #     loop.create_task(save_activity(request, data.get('activity')))
-            
-            data['activity'], task = await fediverse.new_status(
+            newActivity = FediverseActivity(
+                fediverse,
                 activity_type=activity_type,
                 replyToObj=ap_object,
-                # on_federate_done=partial(callback, request, data),
                 **form.cleaned_data
             )
+            data['activity'] = newActivity.activity
+            ## Caching so that we can show it immediately
+            cache.set(
+                newActivity.activity['object']['id'],
+                newActivity.activity['object'],
+                60
+            )
             ## To schedule later after response done.
-            add_task(request, task)
+            add_task(request, newActivity.federate())
             
             redirect_path = None
             if data['activity']:

@@ -1109,7 +1109,7 @@ class Status(View):
         object_uri = f'{proto}://{request.site.domain}{reversepath("status", rpath)}'
         data = {}
         fediverse = fediverse_factory(request)
-        activity = cache.get(object_uri, None)
+        activity = await sync_to_async(cache.get)(object_uri, None)
         activityObject = None
         
         ## If not found in cache
@@ -1442,10 +1442,10 @@ class Interact(View):
             )
             data['activity'] = newActivity.activity
             ## Caching so that we can show it immediately
-            cache.set(
+            await sync_to_async(cache.set)(
                 newActivity.activity['object']['id'],
                 newActivity.activity['object'],
-                60
+                40
             )
             ## To schedule later after response done.
             add_task(request, newActivity.federate())

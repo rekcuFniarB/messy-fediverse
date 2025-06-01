@@ -7,17 +7,26 @@
 <section class="messy-fediverse-comments" data-parent-uri="{{ parent_uri }}">
     {% spaceless %}
     <h3 class="messy-fediverse-parent-info">
-        {% if request.user.is_staff %}
+        {% if user_is_staff %}
             <a href="{{ request.path }}">
         {% endif %}
+        
+        {% if pageTitle %}
+        {{ pageTitle }}
+        {% else %}
         Comments
-        {% if request.user.is_staff %}
+        {% endif %}
+        
+        {% if user_is_staff %}
             </a>
         {% endif %}
+        {% if rpath %}
         for <a href="/{{ rpath }}/" class="comments-target-link">{{ summary }}</a>
+        {% endif %}
     </h3>
     {% endspaceless %}
     
+    {% if rpath %}
     <form method="post" action="{% url 'messy-fediverse:replies' rpath %}">
         <p>You can leave comment using your <a href="https://en.wikipedia.org/wiki/Fediverse" target="_blank" rel="noopener">fediverse</a> account.</p>
         {% csrf_token %}
@@ -25,10 +34,11 @@
         {{ form.as_p }}
         <p><input type="submit" value="New comment"></p>
     </form>
+    {% endif %}
     
 {% for item in items %}
     {% if item.id %}
-    <article id="item-{{ item.hash }}" data-uri="{{ item.id }}" {% if request.user.is_staff %}data-local-id="{{ item.localId }}"{% endif %}>
+    <article id="item-{{ item.hash }}" data-uri="{{ item.id }}" {% if user_is_staff %}data-local-id="{{ item.localId }}"{% endif %}>
         <header>
             <a href="{{ item.attributedTo }}" rel="author noopener" target="_blank">@{{ item.authorInfo.preferredUsername }}</a>
             
@@ -70,21 +80,42 @@
         </div>
         
         <footer>
-            {% if request.user.is_staff %}
-                <a href="{% url 'messy-fediverse:interact' %}?acct={{ item.id }}"><button class="btn btn-success reply">Reply</button></a>
-                
-                <button class="btn btn-danger delete delete-js">Delete</button>
-                
-                {% if item.meta and item.pk %}
-                    <a href="{% url item.meta|admin_urlname:'change' item.pk %}" data-no-ajax class="btn btn-default">Admin</a>
+            {% if rpath %}
+                {% if user_is_staff %}
+                    <a href="{% url 'messy-fediverse:interact' %}?acct={{ item.id }}"><button class="btn btn-success reply">Reply</button></a>
+                    
+                    <button class="btn btn-danger delete delete-js">Delete</button>
+                    
+                    {% if item.meta and item.pk %}
+                        <a href="{% url item.meta|admin_urlname:'change' item.pk %}" data-no-ajax class="btn btn-default">Admin</a>
+                    {% endif %}
+                {% else %}
+                    <button class="btn btn-success reply reply-js">Reply</button>
                 {% endif %}
-            {% else %}
-                <button class="btn btn-success reply reply-js">Reply</button>
+            {% endif %}
+            
+            {% if item.replies and item.replies|stringformat:"s" == item.replies %}
+            <a href="{{ item.replies }}" class="btn btn-default"
+                title="comments" data-no-target="#messy-comments">
+                    <i class="ion-chatboxes"></i>
+                </a>
             {% endif %}
         </footer>
     </article>
     {% endif %}
 {% endfor %}
+
+{% if prev %}
+    {% if partOf %}
+    <a href="{{ partOf }}" title="start" class="btn btn-default"><i class="ion-ios-skipbackward"></i><i class="ion-ios-play icon-rotate-180"></i></a>
+    {% endif %}
+
+<a href="{{ prev }}" title="newer" class="btn btn-default"><i class="ion-ios-play icon-rotate-180"></i><i class="ion-ios-play icon-rotate-180"></i></a>
+{% endif %}
+
+{% if next %}
+<a href="{{ next }}" title="older" class="btn btn-default"><i class="ion-ios-play"></i><i class="ion-ios-play"></i></a>
+{% endif %}
 </section>
 
 

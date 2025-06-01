@@ -11,14 +11,14 @@ from django.utils.decorators import method_decorator
 from django.templatetags.static import static as _staticurl
 from django.utils.html import strip_tags
 from django.forms.models import model_to_dict
-from django.db.models import Q, Exists, OuterRef
+from django.db.models import Q, F, Exists, OuterRef, Subquery
 from .forms import InteractForm, InteractSearchForm, ReplyForm
 from .fediverse import FediverseActor, FediverseActivity
 from . import html
 import requests
 import json
 from os import path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs, quote as urlquote, unquote as urlunquote
 from django.utils.http import urlencode
 from datetime import datetime
 import sys
@@ -98,6 +98,23 @@ async def postprocess_tasks(sender, **kwargs):
             save_results.append(save_activity(requests_tasks[n][0], activity))
         save_results = await asyncio.gather(*save_results)
         return save_results
+
+def xorcrypt(data: str) -> str:
+    key = settings.XOR_KEY
+    # Repeat key to match data length
+    key = (key * (len(data) // len(key) + 1))[:len(data)]
+    return ''.join(chr(ord(c) ^ ord(k)) for c, k in zip(data, key))
+
+def update_url(url: str, params: dict = {}) -> str:
+    """Updates query parameters in a URL."""
+    parsed_url = urlparse(url)
+    query_params = parse_qs(parsed_url.query)
+    query_params.update(params)
+    ## Removing empty values
+    query_params = {k: v for k, v in query_params.items() if v}
+    new_query = urlencode(query_params, doseq=True)
+    updated_url = parsed_url._replace(query=new_query).geturl()
+    return updated_url
 
 def reverse(name, args=None, kwargs=None):
     '''
@@ -613,7 +630,8 @@ class Replies(View):
         ##      You cannot call this from an async context - use a thread or sync_to_async.
         data = {
             'parent_uri': self.parent_uri(request, rpath),
-            'rpath': rpath
+            'rpath': rpath,
+            'user_is_staff': request.user.is_staff
         }
         data.update(data_update)
         
@@ -930,6 +948,7 @@ class OrderedItemsView(View):
     query_filter = {}
     limit = 10
     select = []
+    _page_params = None
     
     @classmethod
     async def object_to_dict(cls, obj, fields=[]):
@@ -943,10 +962,16 @@ class OrderedItemsView(View):
             d = {k: d.get(k) for k in fields}
         
         for k in d:
-            if isinstance(d[k], object):
+            if (d[k] and type(d[k]) is not dict
+                and type(d[k]) is not list
+                and type(d[k]) is not str
+                and isinstance(d[k], object)):
                 d[k] = str(d[k])
         
         return d
+    
+    def allowed(self):
+        return True
     
     def get_request_url(self, request, with_query_string=True):
         proto = request_protocol(request)
@@ -957,14 +982,30 @@ class OrderedItemsView(View):
                 request_query_string = f'?{request_query_string}'
         return f'{proto}://{request.site.domain}{request.path}{request_query_string}'
     
+    @property
+    def page_params(self):
+        if not self._page_params:
+            self._page_params = {}
+            page_params_input = self.request.GET.get('page', '')
+            if page_params_input:
+                ## expected: {"page":120,"prev":110}
+                try:
+                    self._page_params = json.loads(xorcrypt(urlunquote(page_params_input)))
+                except:
+                    pass
+        return self._page_params
+    
+    @staticmethod
+    def encode_params(data: dict) -> str:
+        return xorcrypt(json.dumps(data))
+    
     def set_filter(self, *args, **kwargs):
         self.query_filter = {}
         return self.query_filter
     
     async def get_queryset(self):
-        page = self.request.GET.get('page') or 0
         try:
-            page = int(page)
+            page = int(self.request.GET.get('page', 0))
         except:
             page = 0
         
@@ -977,28 +1018,49 @@ class OrderedItemsView(View):
         else:
             qs = self.models.objects.all()
         
+        qs_prev_page = None
         ## Getting total count
         totalCount = await qs.acount()
         if page:
             ## Pagination
+            ## (1235, "This version of MariaDB doesn't yet support 'LIMIT & IN/ALL/ANY/SOME subquery'")
+            # qs_prev_page_sub = (qs.all()
+            #     .filter(pk__gt=page)
+            #     .order_by('pk')[:self.limit]
+            # )
+            # qs_prev_page = (qs.all()
+            #     .filter(pk__in=qs_prev_page_sub)
+            #     .order_by('pk')
+            # )
+            qs_prev_page = (qs.all()
+                .filter(pk__gt=page)
+                .order_by('pk')
+                [:self.limit]
+            )
             qs = qs.filter(pk__lte=page)
+        
         qs = qs.order_by('-pk')
         ## Applying limit
         qs = qs[0:self.limit+1]
         qs.totalCount = totalCount
+        qs.prev_page = qs_prev_page
+        
         return qs
     
     async def get(self, request, *args, **kwargs):
+        if not self.allowed():
+            raise PermissionDenied
+            
         self.set_filter(request, *args, **kwargs)
         qs = await self.get_queryset()
         data = {
             'type': 'OrderedCollection',
             'totalItems': qs.totalCount
         }
-        uri = self.get_request_url(request, False)
-        page = request.GET.get('page') or 0
+        uri = self.get_request_url(request, True)
+        
         try:
-            page = int(page)
+            page = int(request.GET.get('page', 0))
         except:
             page = 0
         
@@ -1006,13 +1068,18 @@ class OrderedItemsView(View):
             data['id'] = uri
             firstItem = await qs.afirst()
             if firstItem:
-                data['first'] = f'{uri}?page={firstItem.pk}'
+                data['first'] = update_url(uri, {'page': firstItem.pk})
+                
+                ## If showing html page
+                if not is_json_request(request):
+                    return redirect(data['first'])
         else:
-            data['id'] = f'{uri}?page={page}'
+            data['id'] = uri
             data['type'] = 'OrderedCollectionPage'
-            data['partOf'] = uri
+            data['partOf'] = update_url(uri, {'page': None})
             data['orderedItems'] = []
             ids = []
+            
             async for _item in qs:
                 ids.append(_item.pk)
                 _item = await self.object_to_dict(_item, self.select)
@@ -1025,9 +1092,36 @@ class OrderedItemsView(View):
                 nextPageItem = data['orderedItems'].pop()
                 nextPageId = ids.pop()
                 ## Has next page
-                data['next'] = f'{uri}?page={nextPageId}'
+                data['next'] = update_url(uri, {'page': nextPageId})
+            
+            prev_page = None
+            if hasattr(qs, 'prev_page') and type(qs.prev_page) is not None:
+                async for p in qs.prev_page.values_list('pk', flat=True):
+                    prev_page = p
+                
+                if prev_page:
+                    data['prev'] = update_url(uri, {'page': prev_page})
         
-        return ActivityResponse(data, request)
+        if is_json_request(request):
+            return ActivityResponse(data, request)
+        
+        data['user_is_staff'] = await request_user_is_staff(request)
+        
+        data['items'] = []
+        for item in data['orderedItems']:
+            apobject = item.get('object')
+            if type(apobject) is dict:
+                if 'published' in apobject:
+                    apobject['published'] = datetime.fromisoformat(apobject['published'].rstrip('Z'))
+                
+                if 'replies' not in apobject:
+                    
+                    apobject['replies'] = reversepath('replies', urlparse(apobject['id']).path)
+            data['items'].append(apobject)
+        
+        data['pageTitle'] = self.pageTitle
+        
+        return render(request, self.template, data)
 
 class Followers(OrderedItemsView):
     model = Follower
@@ -1045,16 +1139,35 @@ class Followers(OrderedItemsView):
 
 class Outbox(OrderedItemsView):
     model = Activity
+    template = 'messy/fediverse/replies.html'
+    pageTitle = 'Local Posts'
     
     def set_filter(self, request, *args, **kwargs):
         fediverseUser = fediverse_factory(request)
+        q_params = {}
+        if request.GET.get('noreplies'):
+            ## where context equals object_uri
+            q_params['context'] = F('object_uri')
+        
         self.query_filter = Q(
             Q(activity_type='CRE') | Q(activity_type='ANN'),
             disabled=False,
             incoming=False,
-            actor_uri=fediverseUser.id
+            actor_uri=fediverseUser.id,
+            **q_params
         )
         return self.query_filter
+    
+    def allowed(self):
+        if is_json_request(self.request):
+            return True
+        
+        referer = self.request.META.get('HTTP_REFERER')
+        if not referer or urlparse(referer).netloc != self.request.site.domain:
+            return False
+        
+        return True
+
 
 def webfinger(request):
     '''

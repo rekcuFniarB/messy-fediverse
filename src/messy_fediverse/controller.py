@@ -736,7 +736,9 @@ class Replies(View):
             if not await request_user_is_staff(request):
                 referer = request.META.get('HTTP_REFERER')
                 if not referer or urlparse(referer).netloc != request.site.domain:
-                    raise PermissionDenied
+                    ## Redirecting to post view
+                    return redirect(f'/{rpath}/')
+                    
             
             context_root_url = reversepath('dumb', 'context').rstrip('/')
             context = None

@@ -733,6 +733,11 @@ class Replies(View):
                 'items': items
             }, request)
         else:
+            if not await request_user_is_staff(request):
+                referer = request.META.get('HTTP_REFERER')
+                if not referer or urlparse(referer).netloc != request.site.domain:
+                    raise PermissionDenied
+            
             context_root_url = reversepath('dumb', 'context').rstrip('/')
             context = None
             data = {
@@ -1296,10 +1301,13 @@ class Status(View):
         else:
             if delActivity or data['deleted']:
                 raise Http404(f'Status {rpath} was deleted.')
-            elif 'url' in apobject and apobject['url'] and apobject['url'] != apobject['id']:
-                return redirect(apobject['url'])
-            elif 'inReplyTo' in apobject and apobject['inReplyTo']:
-                return redirect(apobject['inReplyTo'])
+            
+            referer = request.META.get('HTTP_REFERER')
+            if not referer or urlparse(referer).netloc != request.site.domain:
+                if 'url' in apobject and apobject['url'] and apobject['url'] != apobject['id']:
+                    return redirect(apobject['url'])
+                elif 'inReplyTo' in apobject and apobject['inReplyTo']:
+                    return redirect(apobject['inReplyTo'])
         
         if apobject['context'].startswith(fediverse.id):
             apobject['reply_path'] = reversepath('replies', urlparse(apobject['id']).path)

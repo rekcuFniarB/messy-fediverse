@@ -33,7 +33,7 @@
         </p>
         
         {% if object.reply_path %}
-            <p><a href="{{ object.reply_path }}" data-target="#messy-fediverse-status-comments">comments</a></p>
+            <p><a href="{{ object.reply_path }}" data-no-target="#messy-fediverse-status-comments"><i class="ion-chatboxes"></i> comments</a></p>
         {% endif %}
     </header>
     

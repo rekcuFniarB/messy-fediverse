@@ -4,6 +4,11 @@
 {% block title %}{{ block.super }} {{ summary }}{% endblock title %}
 
 {% block main %}
+
+{% if rpath %}
+<div data-html-mess data-include-url="/{{ rpath }}/" data-select=".messy-fediverse-status"></div>
+{% endif %}
+
 <section class="messy-fediverse-comments" data-parent-uri="{{ parent_uri }}">
     {% spaceless %}
     <h3 class="messy-fediverse-parent-info">
@@ -21,7 +26,7 @@
             </a>
         {% endif %}
         {% if rpath %}
-        for <a href="/{{ rpath }}/" class="comments-target-link">{{ summary }}</a>
+        for <a href="/{{ rpath }}/" class="comments-target-link-">{{ summary }}</a>
         {% endif %}
     </h3>
     {% endspaceless %}

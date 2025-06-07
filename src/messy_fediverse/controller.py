@@ -678,7 +678,7 @@ class Replies(View):
         else:
             items = Activity.objects.filter(context=context, disabled=False)
         
-        items = items.order_by('-pk')
+        items = items.order_by('pk')
         
         _data['contexts'].add(context)
         
@@ -706,7 +706,27 @@ class Replies(View):
                                 del(_data['replies'][n])
                 continue
             
-            if toAppend not in _data['replies']:
+            if toAppend not in _data['replies'] and type(toAppend) is dict:
+                for n, reply in enumerate(_data['replies']):
+                    apObject = reply.get('object')
+                    
+                    if (
+                        type(apObject) is dict
+                        and apObject.get('id')
+                        and type(toAppend.get('object')) is dict
+                        ## comparing object_uri
+                        and apObject.get('id') == toAppend.get('object').get('id')
+                    ):
+                        ## activity with the same object_uri
+                        ## probably was updated
+                        if toAppend.get('pk') > reply.get('pk'):
+                            ## replacing with new
+                            _data['replies'][n] = toAppend
+                        ## not appending
+                        toAppend = None
+                        break
+            
+            if toAppend and toAppend not in _data['replies']:
                 _data['replies'].append(toAppend)
                 ## FIXME probably this recursion was made for some instances
                 ## which don't keep track of contexts, like misskey
@@ -723,7 +743,7 @@ class Replies(View):
         
         if is_json_request(request):
             items = await self.get_replies(request, rpath, content=content)
-            items.reverse()
+            # items.reverse()
             
             return ActivityResponse({
                 '@context': "https://www.w3.org/ns/activitystreams",
@@ -747,7 +767,7 @@ class Replies(View):
                 'form': ReplyForm(),
                 'summary': ''
             }
-            data['items'].reverse()
+            # data['items'].reverse()
             
             for n, apobject in enumerate(data['items']):
                 if 'object' in apobject and type(apobject['object']) is dict:

@@ -11,7 +11,7 @@ from django.utils.decorators import method_decorator
 from django.templatetags.static import static as _staticurl
 from django.utils.html import strip_tags
 from django.forms.models import model_to_dict
-from django.db.models import Q, F, Exists, OuterRef, Subquery
+from django.db.models import Q, F, Exists, OuterRef, Subquery, Max as DbMax
 from .forms import InteractForm, InteractSearchForm, ReplyForm
 from .fediverse import FediverseActor, FediverseActivity
 from . import html
@@ -1129,26 +1129,17 @@ class OrderedItemsView(View):
                 if prev_page:
                     data['prev'] = update_url(uri, {'page': prev_page})
         
+        data = await self.postprocess(request, data)
+        
         if is_json_request(request):
             return ActivityResponse(data, request)
-        
-        data['user_is_staff'] = await request_user_is_staff(request)
-        
-        data['items'] = []
-        for item in data['orderedItems']:
-            apobject = item.get('object')
-            if type(apobject) is dict:
-                if 'published' in apobject:
-                    apobject['published'] = datetime.fromisoformat(apobject['published'].rstrip('Z'))
-                
-                if 'replies' not in apobject:
-                    
-                    apobject['replies'] = reversepath('replies', urlparse(apobject['id']).path)
-            data['items'].append(apobject)
         
         data['pageTitle'] = self.pageTitle
         
         return render(request, self.template, data)
+    
+    async def postprocess(self, request, data):
+        return data
 
 class Followers(OrderedItemsView):
     model = Follower
@@ -1201,7 +1192,57 @@ class Outbox(OrderedItemsView):
             return False
         
         return True
-
+    
+    async def postprocess(self, request, data):
+        if is_json_request(request):
+            return data
+        
+        data['user_is_staff'] = await request_user_is_staff(request)
+        
+        data['items'] = []
+        by_object_uri = {}
+        for n, item in enumerate(data['orderedItems']):
+            apobject = item.get('object')
+            if type(apobject) is dict:
+                by_object_uri[apobject.get('id')] = n
+                
+                if 'published' in apobject:
+                    apobject['published'] = datetime.fromisoformat(apobject['published'].rstrip('Z'))
+                
+                if 'replies' not in apobject:
+                    apobject['replies'] = reversepath('replies', urlparse(apobject['id']).path)
+        
+        ## Checking for updated activities
+        subq = (
+            self.model.objects.filter(
+                object_uri__in=by_object_uri.keys(),
+                incoming=False,
+                disabled=False,
+                activity_type='UPD'
+            )
+            .values('object_uri')
+            .annotate(max_id=DbMax('pk'))
+            .values('max_id')
+        )
+        updated_activities_qs = Activity.objects.filter(pk__in=subq)
+        
+        async for _item in updated_activities_qs:
+            _item = await self.object_to_dict(_item, self.select)
+            ## I don't remember the purpose of it
+            if len(_item) == 1:
+                _item = tuple(_item.values())[0]
+            
+            apobject = _item.get('object')
+            if type(apobject) is dict:
+                uri = apobject.get('id')
+                if uri and uri in by_object_uri:
+                    ## Setting updated item we found
+                    data['orderedItems'][by_object_uri[uri]] = _item
+        
+        ## For template
+        data['items'] = [x.get('object') for x in data['orderedItems']]
+        
+        return data
 
 def webfinger(request):
     '''

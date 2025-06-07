@@ -48,7 +48,7 @@ class Activity(models.Model):
     uri = models.URLField('Activity URI', unique=True, null=False)
     activity_type = models.CharField('Type', choices=TYPES, max_length=3, null=False, default='', blank=True)
     actor_uri = models.URLField('Actor URI', null=False, default='', blank=True)
-    object_uri = models.URLField('Object URI', null=False, default='', blank=True)
+    object_uri = models.URLField('Object URI', null=False, default='', blank=True, db_index=True)
     context = models.CharField('Context', null=False, default='', blank=True, max_length=255)
     self_json = models.FileField('Raw JSON', upload_to=get_upload_path, null=True)
     incoming = models.BooleanField('Is incoming', default=False, null=False)

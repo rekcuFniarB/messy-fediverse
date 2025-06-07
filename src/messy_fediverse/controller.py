@@ -1178,6 +1178,13 @@ class Outbox(OrderedItemsView):
         
         self.query_filter = Q(
             Q(activity_type='CRE') | Q(activity_type='ANN'),
+            ## Ignore deleted, e.g.
+            ## there are no acvitities with
+            ## 'Delete' type.
+            ~Exists(self.model.objects.filter(
+                activity_type='DEL',
+                object_uri=OuterRef('object_uri')
+            )),
             disabled=False,
             incoming=False,
             actor_uri=fediverseUser.id,

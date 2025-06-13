@@ -439,6 +439,16 @@ async def save_activity(request, activity):
         if act_type == def_type[1]:
             actType = def_type[0]
     
+    context = (
+        apobject.get('context')
+        or apobject.get('conversation')
+        or activity.get('context')
+        or activity.get('conversation')
+        or apobject.get('inReplyTo')
+        or apobject.get('id')
+        or ''
+    )
+    
     if actType and activity_id:
         fediverse = fediverse_factory(request)
         
@@ -450,17 +460,21 @@ async def save_activity(request, activity):
         ## FIXME maybe we should quit entire processing if activity already exists
         if not act:
             act = Activity(
-                uri = activity_id,
-                activity_type = actType,
-                actor_uri = activity.get('actor', None),
-                object_uri = object_id,
-                context = apobject.get('context') or apobject.get('conversation') or activity.get('context') or activity.get('conversation') or apobject.get('inReplyTo') or apobject.get('id') or '',
-                incoming = incoming
+                uri=activity_id,
+                activity_type=actType,
+                actor_uri=activity.get('actor', None),
+                object_uri=object_id,
+                context=context,
+                incoming=incoming
             )
             
-            ## FIXME probably need to fix context: if there is 'inReplyTo' value then retrieve 
-            ## then object and set context to context of that object
-            
+            ## FIXME probably need to fix context: if there is 'inReplyTo' value
+            ##  then retrieve the object and set context to of context
+            ##  of top most object
+        
+        ## If updating, context might not known during presave.
+        act.context = context
+        
         ## If json already stored
         if json_path and json_path.endswith('.json'):
             if not path.isfile(json_path):
@@ -469,7 +483,13 @@ async def save_activity(request, activity):
             if path.isfile(json_path):
                 act.self_json.name = path.relpath(json_path, settings.MEDIA_ROOT)
         else:
-            await sync_to_async(act.self_json.save)(f'{act.uniqid}.activity.json', content=ContentFile(json.dumps(activity)), save=False)
+            ## FIXME django adds random chars before extension
+            ## if file already exists.
+            await sync_to_async(act.self_json.save)(
+                f'{act.uniqid}.activity.json',
+                content=ContentFile(json.dumps(activity)),
+                save=False
+            )
             await sync_to_async(act.self_json.close)()
         
         try:
@@ -1477,7 +1497,7 @@ class Interact(View):
             undo_activities = Activity.objects.filter(
                 activity_type='UND',
                 object_uri=OuterRef('uri'),
-                actor_uri=data.get('actor', fediverse.id),
+                actor_uri=fediverse.id,
                 disabled=False
             )
             related_actions = (Activity.objects.values('activity_type', 'uri')
@@ -1486,7 +1506,7 @@ class Interact(View):
                     object_uri=data['id'],
                     disabled=False,
                     incoming=False,
-                    actor_uri=data.get('actor', fediverse.id)
+                    actor_uri=fediverse.id
                 )
                 .values('activity_type', 'uri', 'object_uri')
                 .distinct()
@@ -1632,17 +1652,23 @@ class Interact(View):
                 **form.cleaned_data
             )
             data['activity'] = newActivity.activity
+            
             ## Caching so that we can show it immediately
-            await sync_to_async(cache.set)(
-                newActivity.activity['object']['id'],
-                newActivity.activity['object'],
-                40
-            )
+            if type(data['activity'].get('object')) is dict:
+                await sync_to_async(cache.set)(
+                    newActivity.activity['object']['id'],
+                    newActivity.activity['object'],
+                    40
+                )
             ## To schedule later after response done.
             add_task(request, newActivity.federate())
             
             redirect_path = None
             if data['activity']:
+                ## Presave. Will also be saved after
+                ## activity is federated
+                await save_activity(request, data['activity'])
+                
                 if (
                     data['activity'].get('type') not in ('Create', 'Update', 'Delete')
                     and uri_interact
@@ -1659,8 +1685,6 @@ class Interact(View):
                         redirect_path = context.replace(reversepath('dumb', 'context'), '').strip('/')
                         redirect_path = reversepath('replies', redirect_path)
                     
-                    ## FIXME isn't it saved above by create_task()?
-                    #await save_activity(request, data['activity'])
                 elif data['activity'].get('object', '').startswith(fediverse.id):
                     redirect_path = data['activity']['object']
             

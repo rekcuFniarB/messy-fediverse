@@ -9,6 +9,8 @@
              */
             messyFediverse.onFormSubmit = function(event) {
                 event.preventDefault();
+                event.stopPropagation();
+                
                 var requestUrl = new URL(event.target.action);
                 requestParams = {
                     headers: {

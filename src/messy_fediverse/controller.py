@@ -795,6 +795,11 @@ class Replies(View):
                     apobject.update(apobject['object'])
                     data['items'][n] = apobject
                 
+                if data['items'][n]['id'].startswith(f'{proto}://{request.site.domain}'):
+                    data['items'][n]['is_local'] = True
+                else:
+                    data['items'][n]['is_local'] = False
+                
                 if 'authorInfo' not in apobject or not apobject['authorInfo']:
                     if 'attributedTo' in apobject and is_url(apobject['attributedTo']):
                         apobject['authorInfo'], = await fediverse.gather_http_responses(fediverse.aget(apobject['attributedTo']))
@@ -1217,6 +1222,7 @@ class Outbox(OrderedItemsView):
         if is_json_request(request):
             return data
         
+        proto = request_protocol(request)
         data['user_is_staff'] = await request_user_is_staff(request)
         
         data['items'] = []
@@ -1255,12 +1261,27 @@ class Outbox(OrderedItemsView):
             apobject = _item.get('object')
             if type(apobject) is dict:
                 uri = apobject.get('id')
-                if uri and uri in by_object_uri:
-                    ## Setting updated item we found
-                    data['orderedItems'][by_object_uri[uri]] = _item
+                if uri:
+                    if uri in by_object_uri:
+                        ## Setting updated item we found
+                        data['orderedItems'][by_object_uri[uri]] = _item
         
         ## For template
-        data['items'] = [x.get('object') for x in data['orderedItems']]
+        data['items'] = []
+        for x in data['orderedItems']:
+            i = {}
+            i.update(x)
+            apobject = i.get('object')
+            if type(apobject) is dict:
+                i.update(apobject)
+            
+            uri = i.get('id', '')
+            if uri.startswith(f'{proto}://{request.site.domain}'):
+                i['is_local'] = True
+            else:
+                i['is_local'] = False
+            
+            data['items'].append(i)
         
         return data
 

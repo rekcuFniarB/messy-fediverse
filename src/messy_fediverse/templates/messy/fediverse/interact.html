@@ -37,9 +37,12 @@
     {% endif %}
     
     <div class="messy-fediverse-content">
+    <noscript data-sanitize-element
+        data-forbid-attr="style,id,name">
     {% autoescape off %}
     {{ content }}
     {% endautoescape %}
+    </noscript>
     </div>
 
     <form method="post" action=".">

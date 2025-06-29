@@ -37,10 +37,12 @@
         {% endif %}
     </header>
     
-    {# FIXME need to sanitize html somehow #}
-    {% autoescape off %}
-    <p>{{ object.content }}</p>
-    {% endautoescape %}
+    <noscript data-sanitize-element
+        data-forbid-attr="style,id,name">
+        {% autoescape off %}
+        {{ object.content }}
+        {% endautoescape %}
+    </noscript>
     
     {% if request.user.is_staff %}
         <form action="{% url 'messy-fediverse:status' rpath %}" method="post">

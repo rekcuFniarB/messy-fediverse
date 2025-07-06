@@ -289,6 +289,7 @@
                                         domSection.setAttribute(attr.name, attr.value);
                                     }
                                 }
+                                domSection.dispatchEvent(new Event('updated', {bubbles: true, cancelable: true}));
                             }
                         }
                     }

@@ -71,6 +71,7 @@ class Command(BaseCommand):
                 ## No infinite loop in this case
                 self.done = True
                 result = asyncio.run(Replies.fetch_parents(request, options['uri']))
+                result = (result or {}).get('id')
                 self.stderr.write(
                     self.style.SUCCESS(f"DEBUG: Fetched root: {result}")
                 )
@@ -88,12 +89,13 @@ class Command(BaseCommand):
                 
                 try:
                     result = asyncio.run(Replies.fetch_parents(request, activity.object_uri))
+                    result = (result or {}).get('id')
                     self.stderr.write(
                         self.style.SUCCESS(f"DEBUG: Fetched root: {result}")
                     )
                 except BaseException as e:
                     self.stderr.write(
-                        self.style.ERROR(f"ERROR: Processing failed: #{activity.id}.{activity.incoming} {activity}: {e}")
+                        self.style.ERROR(f"ERROR: Processing failed: #{activity.id} {activity}: {e}")
                     )
                 
                 ## If is outgoing
@@ -108,11 +110,11 @@ class Command(BaseCommand):
                             self.style.ERROR(f"Processing failed: #{activity.id}.{activity.incoming} {activity}: {e}")
                         )
                 
-                activity.processing_status = 20
-                activity.save()
+                ## Processing done
+                Activity.objects.filter(pk=activity.pk).update(processing_status=20)
                 
                 self.stderr.write(
-                    self.style.SUCCESS(f"Done activity: {activity.id} {activity}")
+                    self.style.SUCCESS(f"Done activity: #{activity.id} {activity}")
                 )
                 
                 self.stderr.flush()
@@ -138,7 +140,7 @@ class Command(BaseCommand):
         ):
             ## Already federated or too old
             self.stderr.write(
-                self.style.SUCCESS(f"DEBUG: NOT federating: {activity}")
+                self.style.SUCCESS(f"DEBUG: NOT federating: #{activity.id} {activity}")
             )
             return activity_dict
         

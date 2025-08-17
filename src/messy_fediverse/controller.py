@@ -1298,7 +1298,8 @@ class OrderedItemsView(View):
             'totalItems': qs.totalCount
         }
         uri = self.get_request_url(request, True)
-        stderrlog('DEBUG', 'QS:', qs.query.__str__())
+        
+        # stderrlog('DEBUG', 'QS:', qs.query.__str__())
         
         try:
             page = int(request.GET.get('page', 0))
@@ -1425,6 +1426,7 @@ class Outbox(OrderedItemsView):
                     actor_uri=OuterRef('actor_uri'),
                     object_uri=F('context'),
                     disabled=False,
+                    activity_type='CRE',
                 )
             )
             
@@ -1441,7 +1443,10 @@ class Outbox(OrderedItemsView):
             
             self.query_filter = Q(
                 # Exists(qs_has_other),
+                ## Skip threads started by us
                 ~Exists(qs_we_started),
+                ## This will match only first
+                ## our comment in the thread/context
                 ~Exists(qs_non_first),
                 ## Ignore deleted, e.g.
                 ## there are no acvitities with

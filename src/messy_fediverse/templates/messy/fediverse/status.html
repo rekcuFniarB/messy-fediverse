@@ -66,6 +66,15 @@
             </div>
         </form>
         
+        <footer>
+        {% if thread_link %}
+        <a href="{{ thread_link }}" class="btn btn-default"
+            title="View full thread">
+            <i class="ion-chatboxes"></i>
+        </a>
+        {% endif %}
+        </footer>
+        
         <div id="activity-raw-code" class="mt-1 d-none">
             <h3>Raw</h3>
             <code><pre>{{ raw_json }}</pre></code>

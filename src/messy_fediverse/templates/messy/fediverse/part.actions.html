@@ -15,7 +15,14 @@
             <button type="submit" name="activity_type" value="Like" class="btn btn-default wiki-icon wiki-icon-thumbup" title="Like">&nbsp;</button>
         {% endif %}
     {% endif %}
-
+    
+    {% if thread_link %}
+    <a href="{{ thread_link }}" class="btn btn-default"
+        title="View full thread">
+        <i class="ion-chatboxes"></i>
+    </a>
+    {% endif %}
+    
     {% if request.user.is_authenticated %}
     <label class="m-1"><input type="checkbox" class="" data-toggle="#messy-fediverse-new-post-form"><span class="p-1">Form</span></label>
     {% endif %}

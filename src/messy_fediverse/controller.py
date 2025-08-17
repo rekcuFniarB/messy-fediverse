@@ -63,6 +63,12 @@ def request_user_is_staff(request):
     ## due to lazy executions, so we get errors.
     return request.user.is_staff
 
+@sync_to_async
+def request_user_is_authenticated(request):
+    ## We can't just use request.user.is_staff from async views
+    ## due to lazy executions, so we get errors.
+    return request.user.is_authenticated
+
 def add_task(request, task):
     '''
     Adds new task to the queue
@@ -1496,6 +1502,7 @@ class Outbox(OrderedItemsView):
         
         proto = request_protocol(request)
         data['user_is_staff'] = await request_user_is_staff(request)
+        data['user_is_authenticated'] = await request_user_is_authenticated(request)
         
         data['items'] = []
         by_object_uri = {}
@@ -1533,10 +1540,12 @@ class Outbox(OrderedItemsView):
             apobject = _item.get('object')
             if type(apobject) is dict:
                 uri = apobject.get('id')
-                if uri:
-                    if uri in by_object_uri:
-                        ## Setting updated item we found
-                        data['orderedItems'][by_object_uri[uri]] = _item
+                if uri and uri in by_object_uri:
+                    ## Setting updated item we found
+                    old = data['orderedItems'][by_object_uri[uri]].get('object')
+                    apobject['published'] = old.get('published') or apobject.get('published')
+                    apobject['replies'] = old.get('replies') or apobject.get('replies')
+                    data['orderedItems'][by_object_uri[uri]] = _item
         
         first_item = None
         
@@ -1571,6 +1580,8 @@ class Outbox(OrderedItemsView):
             
             data['items'].append(i)
         
+        data['original_thread_url'] = None
+        
         if request.GET.get('threads'):
             self.pageTitle = 'Replies to threads'
         elif request.GET.get('thread'):
@@ -1580,11 +1591,26 @@ class Outbox(OrderedItemsView):
                 ## By default it's sorted by id but that sort may be wrong
                 ## due to caching.
                 data['items'] = sorted(data['items'], key=lambda i: str(i.get('published')))
-            
+                
                 first_item = data['items'][0]
-            
+                
+                ## Trying to guess original thread url if it's external
                 if not first_item.get('id').startswith(f'{proto}://{request.site.domain}'):
                     data['original_thread_url'] = first_item.get('url') or first_item.get('id')
+                
+                if (
+                    not data['original_thread_url']
+                    and is_url(first_item.get('context', ''))
+                    and not first_item.get('context').startswith(f'{proto}://{request.site.domain}')
+                ):
+                    data['original_thread_url'] = first_item.get('context')
+                
+                if (
+                    not data['original_thread_url']
+                    and first_item.get('inReplyTo')
+                    and not first_item.get('inReplyTo').startswith(f'{proto}://{request.site.domain}')
+                ):
+                    data['original_thread_url'] = first_item.get('inReplyTo')
         
         return data
 
@@ -1726,6 +1752,10 @@ class Status(View):
         if apobject['context'].startswith(fediverse.id):
             apobject['reply_path'] = reversepath('replies', urlparse(apobject['id']).path)
         
+        if 'context' in apobject:
+            data['thread_link'] = (reverse('outbox')
+                + f'?thread={apobject["context"]}')
+        
         if 'published' in apobject and apobject['published']:
             apobject['published'] = datetime.fromisoformat(apobject['published'].rstrip('Z'))
         
@@ -1839,6 +1869,11 @@ class Interact(View):
             data['done_actions'] = {}
             async for action in related_actions:
                 data['done_actions'][action['activity_type']] = action
+        
+        context = data.get('context') or data.get('conversation')
+        if context:
+            data['thread_link'] = (reverse('outbox')
+                + f'?thread={context}')
         
         ## If is an user profile
         if 'publicKey' in data:

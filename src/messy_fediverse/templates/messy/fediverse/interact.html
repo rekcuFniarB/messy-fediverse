@@ -70,11 +70,13 @@
     </form>
     
     <div class="d-none" id="messy-fediverse-preview">
-        <div class="mb-1">
-            <button data-action="togglePreview"><small>Edit</small></button>
-        </div>
-        
         <div class="preview"></div>
+        
+        <div class="mb-1 flex flex-right">
+            <button data-action="togglePreview" class="btn btn-default">
+                Edit
+            </button>
+        </div>
     </div>
     
     {% if request.user.is_staff %}

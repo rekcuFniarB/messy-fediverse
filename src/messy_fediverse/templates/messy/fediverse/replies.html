@@ -41,9 +41,20 @@
     </form>
     {% endif %}
     
+    {% if original_thread_url %}
+    <p>Thread may be incomplete. See original thread
+        <a href="{{ original_thread_url }}" target="_blank" rel="noopener">there</a>.
+    </p>
+    {% endif %}
+    
 {% for item in items %}
     {% if item.id %}
-    <article id="item-{{ item.hash }}" data-uri="{{ item.id }}" {% if user_is_staff %}data-local-id="{{ item.localId }}"{% endif %}>
+    <article 
+        id="item-{{ item.hash }}"
+        data-uri="{{ item.id }}"
+        {% if user_is_staff %}data-local-id="{{ item.localId }}"{% endif %}
+        class="{% if not item.is_local %}remote{% endif %}"
+    >
         <header>
             <a href="{{ item.attributedTo }}"
                 rel="author noopener"
@@ -108,11 +119,16 @@
                 {% endif %}
             {% endif %}
             
-            {% if item.replies and item.replies|stringformat:"s" == item.replies %}
+            {% if item.thread_link %}
+            <a href="{{ item.thread_link }}" class="btn btn-default"
+                title="View full thread" data-no-target="#messy-comments">
+                <i class="ion-chatboxes"></i>
+            </a>
+            {% elif item.replies and item.replies|stringformat:"s" == item.replies %}
             <a href="{{ item.replies }}" class="btn btn-default"
                 title="comments" data-no-target="#messy-comments">
-                    <i class="ion-chatboxes"></i>
-                </a>
+                <i class="ion-chatboxes"></i>
+            </a>
             {% endif %}
         </footer>
     </article>

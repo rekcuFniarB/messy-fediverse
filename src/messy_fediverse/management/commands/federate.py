@@ -1,6 +1,5 @@
 from django.core.management.base import BaseCommand, CommandError
 from messy_fediverse import controller
-from messy_fediverse.fediverse import FediverseActivity
 from django.conf import settings
 from django.contrib.sites.models import Site
 from django.test import RequestFactory
@@ -52,12 +51,9 @@ class Command(BaseCommand):
         if options['json']:
             with open(options['json'], 'rb') as f:
                 activity_dict = json.load(f)
-                activity = FediverseActivity(
-                    actor=actor,
-                    activity_type=activity_dict['type'],
-                    activity=activity_dict
-                )
-                result = asyncio.run(activity.federate())
+                activity = actor.activity(activity)
+                activity = asyncio.run(actor.prepare_activity(activity))
+                result = asyncio.run(actor.federate(activity))
         
         if options['output_json']:
             with open(options['output_json'], 'wb') as f:

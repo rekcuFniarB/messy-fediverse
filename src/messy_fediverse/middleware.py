@@ -18,7 +18,10 @@ from asgiref.sync import iscoroutinefunction, markcoroutinefunction
 from functools import wraps
 
 def stderrlog(*msg):
-    if settings.DEBUG or 'debug' in msg or 'DEBUG' in msg:
+    if (
+        settings.DEBUG or 'error' in msg or 'ERROR' in msg
+        or 'warning' in msg or 'WARNING' in msg
+    ):
         print(*msg, file=sys.stderr, flush=True)
 
 

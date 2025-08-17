@@ -5,14 +5,17 @@
 </template>
 
 <div id="messy-fediverse" class="messy-fediverse">
-    {% if request.user.is_staff %}
     <nav class="messy-fediverse-nav">
         <ul>
+            {% if request.user.is_staff %}
             <li><a href="{% url 'messy-fediverse:interact' %}">Interact</a></li>
             <li><a href="{% url 'messy-fediverse:following' %}">Following</a></li>
+            {% endif %}
+            <li><a href="{% url 'messy-fediverse:outbox' %}?noreplies=y">Posts</a></li>
+            <li><a href="{% url 'messy-fediverse:outbox' %}?threads=y"
+                title="Comments to threads">Comments</a></li>
         </ul>
     </nav>
-    {% endif %}
     
     <div id="messy-fediverse-block-main">
     {% block main %}{% endblock %}

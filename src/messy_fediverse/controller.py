@@ -11,9 +11,9 @@ from django.utils.decorators import method_decorator
 from django.templatetags.static import static as _staticurl
 from django.utils.html import strip_tags
 from django.forms.models import model_to_dict
-from django.db.models import Q, F, Exists, OuterRef, Subquery, Max as DbMax
+from django.db.models import Q, F, Exists, OuterRef, Subquery, Count, Max as DbMax, Min as DbMin
 from .forms import InteractForm, InteractSearchForm, ReplyForm
-from .fediverse import FediverseActor, FediverseActivity
+from .fediverse import FediverseActor
 from . import html
 import requests
 import json
@@ -416,7 +416,8 @@ async def save_activity(request, activity):
     activity: dict
     '''
     if type(activity) is not dict or not activity.get('id') or not activity.get('type'):
-        return activity
+        stderrlog('ERROR', 'Bad activity to save', activity)
+        return None
     
     act = None
     json_path = activity.get('_json', None)
@@ -438,6 +439,11 @@ async def save_activity(request, activity):
     for def_type in Activity.TYPES:
         if act_type == def_type[1]:
             actType = def_type[0]
+    
+    if act_type == 'Delete' and '/users/' in object_id:
+        ## Ignoring users deletion, not implemented yet.
+        ## We don't store 3rd party users anyway
+        return None
     
     context = (
         apobject.get('context')
@@ -462,11 +468,19 @@ async def save_activity(request, activity):
             act = Activity(
                 uri=activity_id,
                 activity_type=actType,
-                actor_uri=activity.get('actor', None),
+                actor_uri=activity.get('actor', '') or '',
                 object_uri=object_id,
                 context=context,
                 incoming=incoming
             )
+            
+            published = (
+                apobject.get('published', '')
+                or activity.get('published', '')
+            ).replace('Z', '+00:00')
+            
+            if published:
+                act.ts = published
             
             ## FIXME probably need to fix context: if there is 'inReplyTo' value
             ##  then retrieve the object and set context to of context
@@ -474,23 +488,31 @@ async def save_activity(request, activity):
         
         ## If updating, context might not known during presave.
         act.context = context
+        act.activity_data = activity
         
-        ## If json already stored
-        if json_path and json_path.endswith('.json'):
-            if not path.isfile(json_path):
-                ## Trying to normalize
-                json_path = fediverse.normalize_file_path(json_path)
-            if path.isfile(json_path):
-                act.self_json.name = path.relpath(json_path, settings.MEDIA_ROOT)
-        else:
-            ## FIXME django adds random chars before extension
-            ## if file already exists.
-            await sync_to_async(act.self_json.save)(
-                f'{act.uniqid}.activity.json',
-                content=ContentFile(json.dumps(activity)),
-                save=False
-            )
-            await sync_to_async(act.self_json.close)()
+        ## Mark as already processed
+        if '_response' in activity:
+            act.processing_status = 20
+        
+        ## Disabled FIXME remove in the future
+        ## we store JSON in DB now
+        if False:
+            ## If json already stored
+            if json_path and json_path.endswith('.json'):
+                if not path.isfile(json_path):
+                    ## Trying to normalize
+                    json_path = fediverse.normalize_file_path(json_path)
+                if path.isfile(json_path):
+                    act.self_json.name = path.relpath(json_path, settings.MEDIA_ROOT)
+            else:
+                ## FIXME django adds random chars before extension
+                ## if file already exists.
+                await sync_to_async(act.self_json.save)(
+                    f'{act.uniqid}.activity.json',
+                    content=ContentFile(json.dumps(activity)),
+                    save=False
+                )
+                await sync_to_async(act.self_json.close)()
         
         try:
             await sync_to_async(act.save)()
@@ -908,6 +930,152 @@ class Replies(View):
                 result['error'] = '\n'.join(error.args)
         
         return JsonResponse(result)
+    
+    @classmethod
+    async def fetch_parents(cls, request, uri):
+        '''Get root post
+        request: HttpRequest
+        uri: activity object URI (not activity URI)
+        
+        How to test:
+        >>> from django.contrib.sites.models import Site
+        >>> site = Site.objects.filter(domain='top.ofthe.top').first()
+        >>> from django.test import RequestFactory
+        >>> request = RequestFactory().get('/social/', secure=True)
+        >>> request.site = site
+        >>> from messy_fediverse.controller import Replies
+        >>> import asyncio
+        >>> result = asyncio.run(Replies.get_root_post(request, 'https://example.com/object/'))
+        '''
+        
+        ids = []
+        activities = []
+        
+        if not request:
+            ## For test
+            from django.contrib.sites.models import Site
+            site = await Site.objects.filter(domain='top.ofthe.top').afirst()
+            from django.test import RequestFactory
+            settings.ROOT_URLCONF = 'top_ofthe_top.urls'
+            request = RequestFactory().get('/social/', secure=True)
+            request.site = site
+        
+        actor = None
+        thread = []
+        done = False
+        should_save = False
+        parent = None
+        context = ''
+        done = False
+        root = None
+        
+        while not done and uri:
+            activity = await Activity.objects.filter(
+                Q(activity_type='CRE') | Q(activity_type='UPD'),
+                ## Ignore deleted, e.g.
+                ## there are no acvitities with
+                ## 'Delete' type.
+                ~Exists(Activity.objects.filter(
+                    activity_type='DEL',
+                    object_uri=OuterRef('object_uri')
+                )),
+                disabled=False,
+                object_uri=uri,
+            ).order_by('-pk').afirst()
+            
+            ap_object = None
+            activity_dict = None
+            
+            if activity:
+                activity_dict = await activity.get_dict()
+                if type(activity_dict) is dict:
+                    ap_object = activity_dict.get('object')
+            else:
+                ## Was not saved yet
+                if not actor:
+                    actor = fediverse_factory(request)
+                
+                fresponse = actor.aget(uri)
+                ap_object, = await actor.gather_http_responses(fresponse)
+                
+                if type(ap_object) is dict:
+                    ## Making pseudo activity
+                    # activity_dict = {
+                    #     'id': ('http://localhost/?cached=y&object='
+                    #         + urlquote(ap_object.get('id', ''))),
+                    #     'object': ap_object,
+                    #     'actor': ap_object.get('attributedTo'),
+                    #     'type': 'Create',
+                    #     'cc': ap_object.get('cc'),
+                    #     'to': ap_object.get('to'),
+                    # }
+                    activity_dict = actor.activity(
+                        object=ap_object,
+                        actor=ap_object.get('attributedTo'),
+                        type='Create',
+                        cc=ap_object.get('cc'),
+                        to=ap_object.get('to'),
+                    )
+                else:
+                    stderrlog('WARNING', 'Got bad activity object when fetching thread for ', uri, ap_object)
+            
+            ## If activity type was like or similar
+            if ap_object and type(ap_object) is not dict:
+                if not actor:
+                    actor = fediverse_factory(request)
+                
+                fresponse = actor.aget(ap_object)
+                ap_object, = await actor.gather_http_responses(fresponse)
+            
+            uri = None
+            
+            if type(ap_object) is dict:
+                activities.append(activity_dict)
+                uri = ap_object.get('inReplyTo')
+                if not uri:
+                    ## found root
+                    root = activity_dict
+            
+            if type(root) is dict:
+                root_obj = root.get('object')
+                if type(root_obj) is not dict:
+                    stderrlog('ERROR', 'Bad root activity', root)
+                    return False
+                
+                context = (
+                    root_obj.get('context')
+                    or root_obj.get('conversation')
+                    or root_obj.get('id')
+                )
+                
+                for activity_dict in activities:
+                    activity_obj = activity_dict.get('object')
+                    if type(activity_obj) is not dict:
+                        stderrlog('WARNING', 'Bad activity', activity_dict)
+                        continue
+                    activity_obj['context'] = context
+                    activity_obj['conversation'] = context
+                    activity_dict['context'] = context
+                    activity_dict['conversation'] = context
+                    
+                    activity = await save_activity(request, activity_dict)
+                    
+                    if activity:
+                        stderrlog('DEBUG', 'Saved activity',
+                            activity.id, activity_dict.get('id'),
+                            'OBJ:', activity_obj.get('id'),
+                            'CONTEXT:', activity_obj.get('context')
+                        )
+                    else:
+                        stderrlog('ERROR', 'NOT Saved activity',
+                            activity, activity_dict.get('id'),
+                            'TYPE:', activity_dict.get('type'),
+                            'OBJ:', activity_obj.get('id'),
+                            'CONTEXT:', activity_obj.get('context'),
+                            'DICT:', activity_dict,
+                        )
+        
+        return {'root': root, 'activities': activities}
 
 @method_decorator(csrf_exempt, name='dispatch')
 class Inbox(View):
@@ -999,6 +1167,7 @@ class OrderedItemsView(View):
     model = None
     query_filter = {}
     limit = 10
+    order = 'desc'
     select = []
     _page_params = None
     
@@ -1013,6 +1182,7 @@ class OrderedItemsView(View):
             ## Filtering keys
             d = {k: d.get(k) for k in fields}
         
+        ## Converting non jsonable values to strings.
         for k in d:
             if (d[k] and type(d[k]) is not dict
                 and type(d[k]) is not list
@@ -1084,14 +1254,26 @@ class OrderedItemsView(View):
             #     .filter(pk__in=qs_prev_page_sub)
             #     .order_by('pk')
             # )
-            qs_prev_page = (qs.all()
-                .filter(pk__gt=page)
-                .order_by('pk')
-                [:self.limit]
-            )
-            qs = qs.filter(pk__lte=page)
+            
+            if self.order == 'desc':
+                qs_prev_page = (qs.all()
+                    .filter(pk__gt=page)
+                    .order_by('pk')
+                    [:self.limit]
+                )
+                qs = qs.filter(pk__lte=page)
+            else:
+                qs_prev_page = (qs.all()
+                    .filter(pk__lt=page)
+                    .order_by('-pk')
+                    [:self.limit]
+                )
+                qs = qs.filter(pk__gte=page)
         
-        qs = qs.order_by('-pk')
+        if self.order == 'desc':
+            qs = qs.order_by('-pk')
+        else:
+            qs = qs.order_by('pk')
         ## Applying limit
         qs = qs[0:self.limit+1]
         qs.totalCount = totalCount
@@ -1110,6 +1292,7 @@ class OrderedItemsView(View):
             'totalItems': qs.totalCount
         }
         uri = self.get_request_url(request, True)
+        stderrlog('DEBUG', 'QS:', qs.query.__str__())
         
         try:
             page = int(request.GET.get('page', 0))
@@ -1189,7 +1372,8 @@ class Outbox(OrderedItemsView):
         fediverseUser = fediverse_factory(request)
         q_params = {}
         if request.GET.get('noreplies'):
-            ## where context equals object_uri
+            ## where context equals object_uri,
+            ## e.g. initial posts
             q_params['context'] = F('object_uri')
         
         self.query_filter = Q(
@@ -1206,6 +1390,94 @@ class Outbox(OrderedItemsView):
             actor_uri=fediverseUser.id,
             **q_params
         )
+        
+        if request.GET.get('threads'):
+            ## Subquery for minimal ids for related context
+            # qs_sub = (
+            #     self.model.objects.filter(context=OuterRef('context'))
+            #     .values('context')
+            #     .annotate(min_id=DbMin('id'))
+            #     .filter(min_id=OuterRef('id'))
+            # )
+            
+            ## Subquery to check if thread
+            ## has other posts
+            qs_has_other =  (
+                self.model.objects.filter(
+                    context=OuterRef('context'),
+                    # pk__ne=OuterRef('pk'),
+                    activity_type='CRE',
+                    disabled=False,
+                )
+                .exclude(actor_uri=OuterRef('actor_uri'))
+                .exclude(pk=OuterRef('pk'))
+            )
+            
+            qs_we_started = (
+                self.model.objects.filter(
+                    context=OuterRef('context'),
+                    actor_uri=OuterRef('actor_uri'),
+                    object_uri=F('context'),
+                    disabled=False,
+                )
+            )
+            
+            ## Subquery to match first row in context
+            qs_non_first = (
+                self.model.objects.filter(
+                    context=OuterRef('context'),
+                    pk__lt=OuterRef('pk'),
+                    activity_type='CRE',
+                    actor_uri=OuterRef('actor_uri'),
+                    disabled=False,
+                )
+            )
+            
+            self.query_filter = Q(
+                # Exists(qs_has_other),
+                ~Exists(qs_we_started),
+                ~Exists(qs_non_first),
+                ## Ignore deleted, e.g.
+                ## there are no acvitities with
+                ## 'Delete' type.
+                ~Exists(self.model.objects.filter(
+                    activity_type='DEL',
+                    object_uri=OuterRef('object_uri')
+                )),
+                ## Filter by first replies
+                # Exists(qs_sub),
+                ## Non starting posts
+                ~Q(object_uri=F('context')),
+                activity_type='CRE',
+                disabled=False,
+                incoming=False,
+                actor_uri=fediverseUser.id,
+                **q_params
+            )
+        
+        thread_context = request.GET.get('thread')
+        if thread_context:
+            self.order = 'asc'
+            
+            # qs_context = self.model.objects.filter(
+            #     pk=thread_id,
+            #     disabled=False
+            # ).values('context')[:1]
+            
+            self.query_filter = Q(
+                ## Ignore deleted, e.g.
+                ## there are no acvitities with
+                ## 'Delete' type.
+                ~Exists(self.model.objects.filter(
+                    activity_type='DEL',
+                    object_uri=OuterRef('object_uri')
+                )),
+                disabled=False,
+                activity_type='CRE',
+                context=thread_context,
+                **q_params
+            )
+        
         return self.query_filter
     
     def allowed(self):
@@ -1227,7 +1499,7 @@ class Outbox(OrderedItemsView):
         
         data['items'] = []
         by_object_uri = {}
-        for n, item in enumerate(data['orderedItems']):
+        for n, item in enumerate(data.get('orderedItems', [])):
             apobject = item.get('object')
             if type(apobject) is dict:
                 by_object_uri[apobject.get('id')] = n
@@ -1242,7 +1514,7 @@ class Outbox(OrderedItemsView):
         subq = (
             self.model.objects.filter(
                 object_uri__in=by_object_uri.keys(),
-                incoming=False,
+                # incoming=False,
                 disabled=False,
                 activity_type='UPD'
             )
@@ -1266,9 +1538,11 @@ class Outbox(OrderedItemsView):
                         ## Setting updated item we found
                         data['orderedItems'][by_object_uri[uri]] = _item
         
+        first_item = None
+        
         ## For template
         data['items'] = []
-        for x in data['orderedItems']:
+        for x in data.get('orderedItems', ()):
             i = {}
             i.update(x)
             apobject = i.get('object')
@@ -1281,7 +1555,36 @@ class Outbox(OrderedItemsView):
             else:
                 i['is_local'] = False
             
+            if i.get('context'):
+                i['thread_link'] = (reverse('outbox')
+                    + f'?thread={i["context"]}')
+            
+            actor = None
+            if 'authorInfo' not in i and 'attributedTo' in i:
+                i['authorInfo'] = {}
+                if not actor:
+                    actor = fediverse_factory(request)
+                try:
+                    i['authorInfo'], = await actor.gather_http_responses(actor.aget(i.get('attributedTo')))
+                except:
+                    pass
+            
             data['items'].append(i)
+        
+        if request.GET.get('threads'):
+            self.pageTitle = 'Replies to threads'
+        elif request.GET.get('thread'):
+            self.pageTitle = 'Thread'
+            
+            if len(data['items']):
+                ## By default it's sorted by id but that sort may be wrong
+                ## due to caching.
+                data['items'] = sorted(data['items'], key=lambda i: str(i.get('published')))
+            
+                first_item = data['items'][0]
+            
+                if not first_item.get('id').startswith(f'{proto}://{request.site.domain}'):
+                    data['original_thread_url'] = first_item.get('url') or first_item.get('id')
         
         return data
 
@@ -1453,7 +1756,7 @@ class Status(View):
         activity = await activity.get_dict()
         
         ## FIXME should also send requests to mentioned instances
-        activity = await fediverse.delete_status(activity)
+        activity = await fediverse.new_delete_activity(activity)
         await save_activity(request, activity)
         
         # return redirect(reversepath('status', rpath))
@@ -1474,7 +1777,7 @@ class Status(View):
         activity = await activity.get_dict()
         
         ## FIXME should also send requests to mentioned instances
-        activity = await fediverse.undelete_status(activity)
+        activity = await fediverse.new_undelete_activity(activity)
         await save_activity(request, activity)
         
         # return redirect(reversepath('status', rpath))
@@ -1644,8 +1947,9 @@ class Interact(View):
                     raise BadRequest(f'Object "{form.cleaned_data["link"]}" has been lost, try again.')
                 if type(ap_object) is not dict:
                     stderrlog('DEBUG', 'GOT NON DICT FROM CACHE:', form.cleaned_data['link'], ap_object)
-                    raise BadRequest(f'God bad ap_object from remote {form.cleaned_data["link"]} or cache: {ap_object}')
+                    raise BadRequest(f'Got bad ap_object from remote {form.cleaned_data["link"]} or cache: {ap_object}')
             
+            ## If an object we are replying to
             if ap_object:
                 if 'type' in ap_object and ap_object['type'] == 'Person':
                     #and form.cleaned_data['reply_direct']:
@@ -1666,23 +1970,11 @@ class Interact(View):
                     ## updating
                     activity_type = 'Update'
             
-            newActivity = FediverseActivity(
-                fediverse,
+            data['activity'] = fediverse.new_interact_activity(
                 activity_type=activity_type,
                 replyToObj=ap_object,
-                **form.cleaned_data
+                **form.cleaned_data,
             )
-            data['activity'] = newActivity.activity
-            
-            ## Caching so that we can show it immediately
-            if type(data['activity'].get('object')) is dict:
-                await sync_to_async(cache.set)(
-                    newActivity.activity['object']['id'],
-                    newActivity.activity['object'],
-                    40
-                )
-            ## To schedule later after response done.
-            add_task(request, newActivity.federate())
             
             redirect_path = None
             if data['activity']:

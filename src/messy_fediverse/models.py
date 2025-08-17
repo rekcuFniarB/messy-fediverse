@@ -30,29 +30,42 @@ class Activity(models.Model):
         verbose_name_plural = 'Activities'
     
     TYPES = (
-        ('',    ''),
-        ('FOL', 'Follow'),
-        ('UNF', 'Unfollow'),
-        ('UND', 'Undo'),
-        ('ACC', 'Accept'),
-        ('CRE', 'Create'),
-        ('UPD', 'Update'),
-        ('NTE', 'Note'),
-        ('DEL', 'Delete'),
+        ('',             ''),
+        ('CCH',     'Cache'),
+        ('FOL',    'Follow'),
+        ('UNF',  'Unfollow'),
+        ('UND',      'Undo'),
+        ('ACC',    'Accept'),
+        ('CRE',    'Create'),
+        ('UPD',    'Update'),
+        ('NTE',      'Note'),
+        ('DEL',    'Delete'),
         ('TOM', 'Tombstone'),
-        ('LKE', 'Like'),
-        ('ANN', 'Announce'),
-        ('BLK', 'Block')
+        ('LKE',      'Like'),
+        ('ANN',  'Announce'),
+        ('BLK',     'Block'),
     )
+    
+    PROC_STATUSES = (
+        (0,   'Unprocessed'),
+        (10,   'Processing'),
+        (20,         'Done'),
+    )
+    
     ts = models.DateTimeField('Timestamp', auto_now_add=True)
     uri = models.URLField('Activity URI', unique=True, null=False)
     activity_type = models.CharField('Type', choices=TYPES, max_length=3, null=False, default='', blank=True)
     actor_uri = models.URLField('Actor URI', null=False, default='', blank=True)
     object_uri = models.URLField('Object URI', null=False, default='', blank=True, db_index=True)
-    context = models.CharField('Context', null=False, default='', blank=True, max_length=255)
-    self_json = models.FileField('Raw JSON', upload_to=get_upload_path, null=True)
+    context = models.CharField('Context', null=False, default='', blank=True, max_length=255, db_index=True)
+    self_json = models.FileField('Raw JSON', upload_to=get_upload_path, null=True, blank=True)
+    activity_data = models.JSONField('Activity data', null=True, blank=True)
     incoming = models.BooleanField('Is incoming', default=False, null=False)
     disabled = models.BooleanField('Disabled', default=False, null=False)
+    processing_status = models.SmallIntegerField(
+        'Processing status', choices=PROC_STATUSES,
+        default=0, null=False, blank=True
+    )
     _uniqid = None
     
     @property
@@ -81,18 +94,19 @@ class Activity(models.Model):
         Get activity dict.
         FIXME: make it async
         '''
-        activity = None
+        activity = self.activity_data
         
-        if self.self_json.name:
-            try:
-                if self.self_json.closed:
-                    self.self_json.open()
-                self.self_json.seek(0)
-                activity = json.loads(self.self_json.read().decode('utf-8'))
-                activity['_static'] = True
-                self.self_json.close()
-            except:
-                pass
+        if not activity:
+            if self.self_json.name:
+                try:
+                    if self.self_json.closed:
+                        self.self_json.open()
+                    self.self_json.seek(0)
+                    activity = json.loads(self.self_json.read().decode('utf-8'))
+                    activity['_static'] = True
+                    self.self_json.close()
+                except:
+                    pass
         
         if not activity:
             activity = {

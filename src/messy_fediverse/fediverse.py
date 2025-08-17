@@ -351,7 +351,7 @@ class FediverseActor:
         self.sign_request(url, method, kwargs)
         
         ## Returns coroutine
-        return getattr(session, method)(url, timeout=30.0, *args, **kwargs)
+        return getattr(session, method)(url, timeout=60.0, *args, **kwargs)
     
     @staticmethod
     def is_coroutine(self, something):
@@ -560,6 +560,87 @@ class FediverseActor:
         result['content'] = content
         return result
     
+    async def prepare_activity(self, activity, **kwargs):
+        '''Prepares activity to federate
+        activity: dict'''
+        
+        in_reply_to_uri = ''
+        initial = activity.get('_initial', {})
+        initial.update(kwargs)
+        activity['_initial'] = initial
+        
+        reply_to_obj = initial.get('replyToObj')
+        activity_obj = activity.get('object')
+        
+        if type(activity_obj) is dict:
+            ## activity_obj might be an uri instead
+            tasks = [self.parse_tags(activity_obj.get('content', ''))]
+            if 'tags' in initial:
+                tasks.append(self.parse_tags(initial['tags']))
+            
+            parse_results = await asyncio.gather(*tasks, return_exceptions=True)
+            if type(parse_results[0]) is dict:
+                activity_obj['content'] = parse_results[0].get('content')
+            for parse_result in parse_results:
+                if type(parse_result) is dict:
+                    for tag in parse_result.get('tag', []):
+                        if tag not in activity_obj['tag']:
+                            activity_obj['tag'].append(tag)
+                    for tag in parse_result.get('attachment', []):
+                        if tag not in activity_obj['attachment']:
+                            activity_obj['attachment'].append(tag)
+            
+            in_reply_to_uri = activity_obj.get('inReplyTo', '')
+            
+        ## If we are replying to some status
+        if not reply_to_obj and in_reply_to_uri:
+            reply_to_obj, = await self.gather_http_responses(self.aget(in_reply_to_uri))
+        
+        if type(reply_to_obj) is dict and activity['type'] != 'Update':
+            attributedTo = reply_to_obj.get('attributedTo')
+            
+            if type(attributedTo) is list:
+                for attr in attributedTo:
+                    if type(attr) is dict and 'type' in attr and attr['type'] == 'Person':
+                        attributedTo = attr['id']
+                        break
+            
+            remote_author = None
+            
+            if 'attributedToPerson' in reply_to_obj and type(reply_to_obj['attributedToPerson']) is dict:
+                remote_author = reply_to_obj['attributedToPerson']
+            elif attributedTo:
+                remote_author, = await self.gather_http_responses(self.aget(attributedTo))
+            
+            if attributedTo:
+                to = (
+                    "https://www.w3.org/ns/activitystreams#Public",
+                    attributedTo,
+                    self.followers
+                )
+                for t in to:
+                    if t not in activity['to']:
+                        activity['to'].append(t)
+            
+            if type(activity_obj) is dict:
+                for t in activity['to']:
+                    if t not in activity_obj['to']:
+                        activity_obj['to'].append(t)
+                
+                if remote_author:
+                    remote_author_url = urlparse(remote_author['id'])
+                    
+                    originMention = {
+                        "href": remote_author.get('url', remote_author.get('id', None)),
+                        "name": f"@{remote_author['preferredUsername']}@{remote_author_url.hostname}",
+                        "type": "Mention"
+                    }
+                    ## Appending parent author to mentions if it isn't there yet
+                    if (len([x for x in activity_obj['tag'] if x.get('href', None) == originMention['href'] or x.get('name', None) == originMention['name']]) == 0):
+                        activity_obj['tag'].append(originMention)
+        
+        return activity
+    
     async def federate(self, activity):
         '''
         Sends activity to other instances.
@@ -577,10 +658,22 @@ class FediverseActor:
                 if endpoint.uri not in endpoints:
                     endpoints.append(endpoint.uri)
         
-        if 'tag' in activity['object']:
-            for tag in activity['object']['tag']:
-                if tag.get('type') == 'Mention' and 'href' in tag and tag['href'] != self.id:
-                    results.append(self.aget(tag['href']))
+        act_object = activity.get('object')
+        if type(act_object) is dict:
+            if 'tag' in act_object:
+                for tag in act_object['tag']:
+                    if tag.get('type') == 'Mention' and 'href' in tag and tag['href'] != self.id:
+                        results.append(self.aget(tag['href']))
+            
+            for to in (act_object.get('to', []) + act_object.get('cc', [])):
+                if 'www.w3.org' in to or to in results:
+                    continue
+                results.append(self.aget(to))
+        
+        for to in (activity.get('to', []) + activity.get('cc', [])):
+            if 'www.w3.org' in to or to in results:
+                continue
+            results.append(self.aget(to))
         
         if len(results) > 0:
             results = await self.gather_http_responses(*results)
@@ -600,30 +693,52 @@ class FediverseActor:
             if endpoint:
                 if endpoint not in endpoints:
                     endpoints.append(endpoint)
-                if user['id'] not in activity['object']['cc'] and user['id'] not in activity['object']['to']:
-                    activity['object']['cc'].append(user['id'])
+                
+                if (
+                    type(act_object) is dict
+                    and user['id'] not in act_object['cc']
+                    and user['id'] not in act_object['to']
+                ):
+                    act_object['cc'].append(user['id'])
+                if (
+                    user['id'] not in activity['cc']
+                    and user['id'] not in activity['to']
+                ):
+                    activity['cc'].append(user['id'])
         
         results = []
-        activity['endpointsResults'] = {}
-        activity['failedRequests'] = {}
         
         # loop = asyncio.get_running_loop()
         # start_ts = loop.time()
+        
+        ## Temporarily removing private properties
+        ## before sending.
+        activity_priv_props = {}
+        for prop in list(activity.keys()):
+            if prop.startswith('_'):
+                activity_priv_props[prop] = activity[prop]
+                del(activity[prop])
         
         for endpoint in endpoints:
             results.append(self.post(endpoint, json=activity))
         
         results = await self.gather_http_responses(*results)
         
+        ## Restoring private props
+        activity.update(activity_priv_props)
+        
+        activity['_endpointsResults'] = {}
+        activity['_failedRequests'] = {}
+        
         for n, result in enumerate(results):
             if self.__DEBUG__:
-                activity['endpointsResults'][endpoints[n]] = result
+                activity['_endpointsResults'][endpoints[n]] = result
             if self.is_response_error(result):
-                activity['failedRequests'][endpoints[n]] = result
+                activity['_failedRequests'][endpoints[n]] = result
         
         ## For debug
         if self.__DEBUG__:
-            activity['requestEndpoints'] = endpoints
+            activity['_requestEndpoints'] = endpoints
         
         return activity
     
@@ -657,7 +772,7 @@ class FediverseActor:
         activity = {
             '@context': self.user.get('@context'),
             
-            'id': path.join(self.id, 'activity', datepath, uniqid, ''),
+            # 'id': path.join(self.id, 'activity', datepath, uniqid, ''),
             'type': 'Create',
             "actor": self.id,
             'published': now.isoformat() + 'Z',
@@ -672,6 +787,7 @@ class FediverseActor:
         activity.update(activity_upd)
         
         if 'object' in activity and type(activity['object']) is dict:
+            object_uri = activity['object'].get('id')
             ## Using some values from object
             for k in ('to', 'cc', 'directMessage', 'context', 'conversation'):
                 if k in activity['object'] and k not in activity_upd:
@@ -682,6 +798,21 @@ class FediverseActor:
             if activity['type'] not in ('Create', 'Update', 'Delete', 'Undo', 'Accept'):
                 ## We don't need to send entire object, just an uri instead
                 activity['object'] = activity['object'].get('id')
+        else:
+            object_uri = activity.get('object', '')
+        
+        if not activity.get('id'):
+            if object_uri:
+                activity_uri = object_uri
+                activity_id = f'activity={uniqid}&ts={now.timestamp()}'
+                if '?' in activity_uri:
+                    activity_uri = activity_uri.replace('?', f'?{activity_id}&', 1)
+                else:
+                    activity_uri = f'{activity_uri}?{activity_id}'
+            else:
+                activity_uri = path.join(self.id, 'activity', datepath, uniqid, '')
+            
+            activity['id'] = activity_uri
         
         return activity
     
@@ -747,9 +878,32 @@ class FediverseActor:
                 data['contentMap'] = {}
             data['contentMap'][kwargs['language']] = data.get('content', '')
         
-        return self.activity(object=data, type=activity_type)
+        ## If we are replying to some status
+        ## replyToObj also may be our object which we are updating
+        if type(replyToObj) is dict and activity_type != 'Update':
+            ## Use context of source if exists
+            context = (
+                replyToObj.get('context')
+                or replyToObj.get('conversation')
+                or replyToObj.get('id')
+            )
+            data['context'] = context
+            data['conversation'] = context
+            ## Not all engines use context though, for example Misskey not.
+            
+            data['inReplyTo'] = replyToObj.get('id')
+            data['directMessage'] = replyToObj.get('directMessage', False)
+        
+        ## Storing initial args to be reused by background worker
+        _initial = kwargs
+        _initial.update({
+           'replyToObj':  replyToObj,
+           'activity_type': activity_type,
+        })
+        
+        return self.activity(object=data, type=activity_type, _initial=_initial)
     
-    async def delete_status(self, activity):
+    async def new_delete_activity(self, activity):
         '''
         Sends Tombstone activity to federated instances.
         Returns activity dict.
@@ -760,10 +914,9 @@ class FediverseActor:
             apobject['type'] = 'Tombstone'
         
         activity = self.activity(type='Delete', object=apobject)
-        await self.federate(activity)
         return activity
     
-    async def undelete_status(self, activity):
+    async def new_undelete_activity(self, activity):
         '''
         Undelete activity
         Returns activity dict.
@@ -775,7 +928,6 @@ class FediverseActor:
             apobject['type'] = 'Tombstone'
         
         activity = self.activity(type='Undo', object=apobject)
-        await self.federate(activity)
         apobject['type'] = apobject['type_was']
         if apobject['type'] == 'Tombstone':
             apobject['type'] = 'Note'
@@ -1084,105 +1236,3 @@ class FediverseActor:
         '''
         filename = path.join('following', sha256(user_id.encode('utf-8')).hexdigest() + '.json')
         return self.read(filename)
-
-
-class FediverseActivity:
-    def __init__(self, actor, replyToObj=None, activity_type='Create', activity=None, **kwargs):
-        '''Activity instance.
-        actor: FediverseActor instance
-        replyToObj: dict, activity object we reply to
-            or activity object we want to modify if activity_type is Update
-        activity_type: string, 'Create' or 'Update'
-        **kwargs: other optional kwargs
-        '''
-        self.actor = actor
-        
-        if activity and type(activity) is dict:
-            self.activity = activity
-        # elif activity_type in ('Create', 'Update'):
-        else:
-            self.activity = actor.new_interact_activity(replyToObj, activity_type, **kwargs)
-        
-        self.object = self.activity.get('object', {})
-        
-        self._init = kwargs
-        self._init.update({
-           'replyToObj':  replyToObj,
-           'activity_type': activity_type,
-        })
-        
-    async def federate(self):
-        '''Prepare activity (parsing e.t.c.) and federate'''
-        
-        if type(self.object) is dict:
-            ## self.object might be an uri instead
-            tasks = [self.actor.parse_tags(self.object.get('content', ''))]
-            if 'tags' in self._init:
-                tasks.append(self.actor.parse_tags(self._init['tags']))
-            
-            parse_results = await asyncio.gather(*tasks, return_exceptions=True)
-            if type(parse_results[0]) is dict:
-                self.object['content'] = parse_results[0].get('content')
-            for parse_result in parse_results:
-                if type(parse_result) is dict:
-                    for tag in parse_result.get('tag', []):
-                        if tag not in self.object['tag']:
-                            self.object['tag'].append(tag)
-                    for tag in parse_result.get('attachment', []):
-                        if tag not in self.object['attachment']:
-                            self.object['attachment'].append(tag)
-        
-        ## If we are replying to some status
-        if type(self._init['replyToObj']) is dict and self._init['activity_type'] != 'Update':
-            attributedTo = self._init['replyToObj'].get('attributedTo')
-            
-            ## Use context of source if exists
-            #context = path.join(self.actor.id, 'context', urlparse(status_id).path.strip('/'), '')
-            self.activity['context'] = self._init['replyToObj'].get('context', self._init['replyToObj'].get('conversation', self._init['replyToObj'].get('id')))
-            self.activity['conversation'] = self.activity['context']
-            if type(self.object) is dict:
-                self.object['context'] = self.activity['context']
-                self.object['conversation'] = self.activity['context']
-            ## Not all engines use context though, for example Misskey not.
-            
-            if type(attributedTo) is list:
-                for attr in attributedTo:
-                    if type(attr) is dict and 'type' in attr and attr['type'] == 'Person':
-                        attributedTo = attr['id']
-                        break
-            
-            remote_author = None
-            
-            if 'attributedToPerson' in self._init['replyToObj'] and type(self._init['replyToObj']['attributedToPerson']) is dict:
-                remote_author = self._init['replyToObj']['attributedToPerson']
-            elif attributedTo:
-                remote_author, = await self.actor.gather_http_responses(self.actor.aget(attributedTo))
-            
-            if attributedTo:
-                to = (
-                    "https://www.w3.org/ns/activitystreams#Public",
-                    attributedTo,
-                    self.actor.followers
-                )
-                for t in to:
-                    if t not in self.activity['to']:
-                        self.activity['to'].append(t)
-            
-            if type(self.object) is dict:
-                if remote_author:
-                    remote_author_url = urlparse(remote_author['id'])
-                    
-                    originMention = {
-                        "href": remote_author.get('url', remote_author.get('id', None)),
-                        "name": f"@{remote_author['preferredUsername']}@{remote_author_url.hostname}",
-                        "type": "Mention"
-                    }
-                    ## Appending parent author to mentions if it isn't there yet
-                    if (len([x for x in self.object['tag'] if x.get('href', None) == originMention['href'] or x.get('name', None) == originMention['name']]) == 0):
-                        self.object['tag'].append(originMention)
-                
-                self.object['inReplyTo'] = self._init['replyToObj'].get('id')
-                self.object['directMessage'] = self._init['replyToObj'].get('directMessage', False)
-                self.activity['directMessage'] = self.object['directMessage']
-        
-        return await self.actor.federate(self.activity)

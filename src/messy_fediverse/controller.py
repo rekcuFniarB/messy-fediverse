@@ -981,10 +981,11 @@ class Replies(View):
                 ## Ignore deleted, e.g.
                 ## there are no acvitities with
                 ## 'Delete' type.
-                ~Exists(Activity.objects.filter(
-                    activity_type='DEL',
-                    object_uri=OuterRef('object_uri')
-                )),
+                ## Disabled, otherwise causes infinite loop.
+                # ~Exists(Activity.objects.filter(
+                #     activity_type='DEL',
+                #     object_uri=OuterRef('object_uri')
+                # )),
                 disabled=False,
                 object_uri=uri,
             ).order_by('-pk').afirst()
@@ -1248,7 +1249,16 @@ class OrderedItemsView(View):
         
         qs_prev_page = None
         ## Getting total count
-        totalCount = await qs.acount()
+        cache_key = f'count-{id(qs.query.__str__())}'
+        totalCount = await cache.aget(cache_key)
+        if not totalCount:
+            if is_json_request(self.request):
+                totalCount = await qs.acount()
+                await cache.aset(totalCount, 60 * 60 * 24)
+            else:
+                ## Not used on html pages
+                totalCount = -1
+        
         if page:
             ## Pagination
             ## (1235, "This version of MariaDB doesn't yet support 'LIMIT & IN/ALL/ANY/SOME subquery'")

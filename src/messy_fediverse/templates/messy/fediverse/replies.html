@@ -3,6 +3,8 @@
 
 {% block title %}{{ block.super }} {{ summary }}{% endblock title %}
 
+{% block pagetype %}<div class="{{ pageClass }}"></div>{% endblock %}
+
 {% block main %}
 
 {% if rpath %}

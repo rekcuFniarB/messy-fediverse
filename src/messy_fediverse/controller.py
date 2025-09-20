@@ -1177,6 +1177,8 @@ class OrderedItemsView(View):
     order = 'desc'
     select = []
     _page_params = None
+    pageTitle = ''
+    pageClass = ''
     
     @classmethod
     async def object_to_dict(cls, obj, fields=[]):
@@ -1360,6 +1362,7 @@ class OrderedItemsView(View):
             return ActivityResponse(data, request)
         
         data['pageTitle'] = self.pageTitle
+        data['pageClass'] = self.pageClass
         
         return render(request, self.template, data)
     
@@ -1384,6 +1387,7 @@ class Outbox(OrderedItemsView):
     model = Activity
     template = 'messy/fediverse/replies.html'
     pageTitle = 'Local Posts'
+    pageClass = 'messy-fediverse-page-posts'
     
     def set_filter(self, request, *args, **kwargs):
         fediverseUser = fediverse_factory(request)
@@ -1599,8 +1603,10 @@ class Outbox(OrderedItemsView):
         
         if request.GET.get('threads'):
             self.pageTitle = 'Replies to threads'
+            self.pageClass = 'messy-fediverse-page-threads'
         elif request.GET.get('thread'):
             self.pageTitle = 'Thread'
+            self.pageClass = 'messy-fediverse-page-threads'
             
             if len(data['items']):
                 ## By default it's sorted by id but that sort may be wrong

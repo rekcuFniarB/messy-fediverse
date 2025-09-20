@@ -21,9 +21,13 @@
 .messy-fediverse-nav ul {
     list-style-type: none;
     display: flex;
+    padding-left: 0;
 }
 .messy-fediverse-nav li {
     margin-right: 1.5rem;
+}
+.messy-fediverse-nav a {
+    border: 1px solid transparent;
 }
 .messy-fediverse-status header {
     display: flex;
@@ -55,3 +59,15 @@
     background-image: url(https://upload.wikimedia.org/wikipedia/commons/9/9e/Thumbs-up-icon-left.svg);
 }
 
+.messy-fediverse-page-following ~ nav .messy-fediverse-nav-following {
+    border-top: 1px solid #333;
+}
+.messy-fediverse-page-interact  ~ nav .messy-fediverse-nav-interact {
+    border-top: 1px solid #333;
+}
+.messy-fediverse-page-posts     ~ nav .messy-fediverse-nav-posts {
+    border-top: 1px solid #333;
+}
+.messy-fediverse-page-threads   ~ nav .messy-fediverse-nav-threads {
+    border-top: 1px solid #333;
+}

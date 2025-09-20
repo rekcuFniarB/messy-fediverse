@@ -84,19 +84,8 @@ class Command(BaseCommand):
             # for activity in qs.iterator(chunk_size=100):
             for activity in qs:
                 self.stderr.write(
-                    self.style.SUCCESS(f"DEBUG: Processing: #{activity.id}.{activity.incoming} {activity}")
+                    self.style.SUCCESS(f"DEBUG: Processing: #{activity.id} {activity}")
                 )
-                
-                try:
-                    result = asyncio.run(Replies.fetch_parents(request, activity.object_uri))
-                    result = (result or {}).get('id')
-                    self.stderr.write(
-                        self.style.SUCCESS(f"DEBUG: Fetched root: {result}")
-                    )
-                except BaseException as e:
-                    self.stderr.write(
-                        self.style.ERROR(f"ERROR: Processing failed: #{activity.id} {activity}: {e}")
-                    )
                 
                 ## If is outgoing
                 if activity.incoming == 0:
@@ -107,8 +96,28 @@ class Command(BaseCommand):
                         )
                     except BaseException as e:
                         self.stderr.write(
-                            self.style.ERROR(f"Processing failed: #{activity.id}.{activity.incoming} {activity}: {e}")
+                            self.style.ERROR(f"Processing failed: #{activity.id} {activity}: {e}")
                         )
+                
+                try:
+                    result = asyncio.run(Replies.fetch_parents(request, activity.object_uri))
+                    if (
+                        type(result) is dict
+                        and 'root' in result
+                        and type(result['root']) is dict
+                        and 'object' in result['root']
+                        and type(result['root']['object']) is dict
+                        and 'id' in result['root']['object']
+                    ):
+                        result = result['root']['object']['id']
+                    
+                    self.stderr.write(
+                        self.style.SUCCESS(f"DEBUG: Fetched root: {result}")
+                    )
+                except BaseException as e:
+                    self.stderr.write(
+                        self.style.ERROR(f"ERROR: Processing failed: #{activity.id} {activity}: {e}")
+                    )
                 
                 ## Processing done
                 Activity.objects.filter(pk=activity.pk).update(processing_status=20)
@@ -142,7 +151,7 @@ class Command(BaseCommand):
             self.stderr.write(
                 self.style.SUCCESS(f"DEBUG: NOT federating: #{activity.id} {activity}")
             )
-            return activity_dict
+            return None
         
         activity_dict = await actor.prepare_activity(activity_dict)
         activity_dict = await actor.federate(activity_dict)

@@ -1,8 +1,19 @@
 {% extends 'messy/fediverse/base.html' %}
 
+{% block title %}{{ block.super }} Following{% endblock title %}
+
 {% block pagetype %}<div class="messy-fediverse-page-following"></div>{% endblock %}
 
 {% block main %}
+<script type="application/json"
+    class="section-metadata"
+    data-path="{{ request.path }}">
+{
+    "title": "Following",
+    "pageClass": "messy-fediverse-page-following"
+}
+</script>
+
 <div id="messy-fediverse-following" class="messy-fediverse">
     <h2>Following</h2>
 

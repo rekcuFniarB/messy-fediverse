@@ -1,8 +1,20 @@
 {% extends 'messy/fediverse/base.html' %}
 
+{% block title %}{{ block.super }} Interact{% endblock title %}
+
 {% block pagetype %}<div class="messy-fediverse-page-interact"></div>{% endblock %}
 
 {% block main %}
+
+<script type="application/json"
+    class="section-metadata"
+    data-path="{{ request.path }}">
+{
+    "title": "Interact",
+    "pageClass": "messy-fediverse-page-interact"
+}
+</script>
+
 <div id="messy-fediverse-interact">
     <h2>Interact</h2>
     

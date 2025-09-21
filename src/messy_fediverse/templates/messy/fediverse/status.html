@@ -1,7 +1,18 @@
 {% extends 'messy/fediverse/base.html' %}
 {% load admin_urls %}
 
+{% block title %}{{ block.super }} {{ object.summary|default:"Viewing message" }}{% endblock title %}
+
 {% block main %}
+
+<script type="application/json"
+    class="section-metadata"
+    data-path="{{ request.path }}">
+{
+    "title": "{{ object.summary|default:'Viewing message'|escapejs }}",
+    "pageClass": "messy-fediverse-page-status"
+}
+</script>
 
 {% if object %}
 <article class="messy-fediverse messy-fediverse-status">

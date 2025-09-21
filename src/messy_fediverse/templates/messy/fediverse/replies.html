@@ -1,11 +1,20 @@
 {% extends 'messy/fediverse/base.html' %}
 {% load admin_urls %}
 
-{% block title %}{{ block.super }} {{ summary }}{% endblock title %}
+{% block title %}{{ block.super }} {{ summary|default:pageTitle }}{% endblock title %}
 
 {% block pagetype %}<div class="{{ pageClass }}"></div>{% endblock %}
 
 {% block main %}
+
+<script type="application/json"
+    class="section-metadata"
+    data-path="{{ request.path }}">
+{
+    "title": "{{ summary|default:pageTitle|escapejs }}",
+    "pageClass": "{{ pageClass|escapejs }}"
+}
+</script>
 
 {% if rpath %}
 <div data-html-mess data-include-url="/{{ rpath }}/" data-select-children=".messy-fediverse-status"></div>

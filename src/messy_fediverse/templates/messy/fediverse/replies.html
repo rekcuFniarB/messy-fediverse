@@ -1,7 +1,9 @@
 {% extends 'messy/fediverse/base.html' %}
 {% load admin_urls %}
 
-{% block title %}{{ block.super }} {{ summary|default:pageTitle }}{% endblock title %}
+{% firstof summary pageTitle meta_json.title "Comments" as summary %}
+
+{% block title %}{{ block.super }} {{ summary }}{% endblock title %}
 
 {% block pagetype %}<div class="{{ pageClass }}"></div>{% endblock %}
 
@@ -11,7 +13,7 @@
     class="section-metadata"
     data-path="{{ request.path }}">
 {
-    "title": "{{ summary|default:pageTitle|escapejs }}",
+    "title": "{{ summary|escapejs }}",
     "pageClass": "{{ pageClass|escapejs }}"
 }
 </script>
@@ -23,21 +25,16 @@
 <section class="messy-fediverse-comments" data-parent-uri="{{ parent_uri }}">
     {% spaceless %}
     <h3 class="messy-fediverse-parent-info">
-        {% if user_is_staff %}
-            <a href="{{ request.path }}">
-        {% endif %}
-        
-        {% if pageTitle %}
-        {{ pageTitle }}
-        {% else %}
-        Comments
-        {% endif %}
-        
-        {% if user_is_staff %}
-            </a>
-        {% endif %}
         {% if rpath %}
-        for <a href="/{{ rpath }}/" class="comments-target-link-">{{ summary }}</a>
+        Comments for <a href="/{{ rpath }}/" class="comments-target-link-">{{ summary }}</a>
+        {% else %}
+            {% if user_is_staff %}
+                <a href="{{ request.path }}">
+            {% endif %}
+            {{ summary }}
+            {% if user_is_staff %}
+                </a>
+            {% endif %}
         {% endif %}
     </h3>
     {% endspaceless %}

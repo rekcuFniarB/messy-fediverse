@@ -1585,7 +1585,7 @@ class Outbox(OrderedItemsView):
             
             if i.get('context'):
                 i['thread_link'] = (reverse('outbox')
-                    + f'?thread={i["context"]}')
+                    + f'?thread={urlquote(i["context"])}')
             
             actor = None
             if 'authorInfo' not in i and 'attributedTo' in i:
@@ -1775,7 +1775,7 @@ class Status(View):
         
         if 'context' in apobject:
             data['thread_link'] = (reverse('outbox')
-                + f'?thread={apobject["context"]}')
+                + f'?thread={urlquote(apobject["context"])}')
         
         if 'published' in apobject and apobject['published']:
             apobject['published'] = datetime.fromisoformat(apobject['published'].rstrip('Z'))
@@ -1894,7 +1894,7 @@ class Interact(View):
         context = data.get('context') or data.get('conversation')
         if context:
             data['thread_link'] = (reverse('outbox')
-                + f'?thread={context}')
+                + f'?thread={urlquote(context)}')
         
         ## If is an user profile
         if 'publicKey' in data:

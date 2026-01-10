@@ -19,7 +19,9 @@ from functools import wraps
 
 def stderrlog(*msg):
     if (
-        settings.DEBUG or 'error' in msg or 'ERROR' in msg
+        settings.MESSY_FEDIVERSE.get('DEBUG', False)
+        or settings.DEBUG
+        or 'error' in msg or 'ERROR' in msg
         or 'warning' in msg or 'WARNING' in msg
     ):
         print(*msg, file=sys.stderr, flush=True)
@@ -281,7 +283,7 @@ class VerifySignature:
             ## Checking digest
             body_digest = b64encode(sha256(request.body).digest()).decode('utf-8')
             if digest != body_digest:
-                return this.response_error(request, f'Bad digest, {digest} != {body_digest}')
+                return self.response_error(request, f'Bad digest, {digest} != {body_digest}')
         
         ## Continue normal process
         return None

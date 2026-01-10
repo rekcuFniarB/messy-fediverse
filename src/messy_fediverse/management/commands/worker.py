@@ -1,16 +1,20 @@
 from django.core.management.base import BaseCommand, CommandError
+from django.db import close_old_connections
 from messy_fediverse.controller import Replies, save_activity, fediverse_factory
 from messy_fediverse.models import Activity
 from django.conf import settings
 from django.contrib.sites.models import Site
 from django.test import RequestFactory
 import asyncio
+from asgiref.sync import sync_to_async
 from time import sleep
 from datetime import datetime
 
 class Command(BaseCommand):
     help = 'Worker process'
-    done = False
+    _done = False
+    _request = None
+    _actor = None
     
     def add_arguments(self, parser):
         # Optional string argument
@@ -23,7 +27,7 @@ class Command(BaseCommand):
         parser.add_argument(
             '--uri',
             type=str,
-            help='Process specific URI'
+            help='Process specific activity of given URI'
         )
         
         parser.add_argument(
@@ -56,33 +60,31 @@ class Command(BaseCommand):
             site = Site.objects.get(domain=options['domain'])
         
         request_factory = RequestFactory()
-        request = request_factory.get('/social/interact/', secure=True)
-        request.site = site
-        actor = fediverse_factory(request)
-        result = None
-        qs = None
+        self._request = request_factory.get('/social/interact/', secure=True)
+        self._request.site = site
+        ## FIXME for multiuser instance actor should
+        ## be different.
+        self._actor = fediverse_factory(self._request)
         
-        ## We want to process one specified activity
-        if options['uri']:
-            qs = Activity.objects.filter(uri=options['uri'])
-        
-        while not self.done:
+        return asyncio.run(self.ahandle(**options))
+    
+    async def ahandle(self, *args, **options):
+        while not self._done:
+            result = None
+            
             if options['uri']:
                 ## No infinite loop in this case
-                self.done = True
-                result = asyncio.run(Replies.fetch_parents(request, options['uri']))
-                result = (result or {}).get('id')
-                self.stderr.write(
-                    self.style.SUCCESS(f"DEBUG: Fetched root: {result}")
-                )
-                qs = Activity.objects.filter(object_uri=options['uri'])
+                self._done = True
+                await Activity.objects.filter(processing_status=0, object_uri=options['uri']).aupdate(processing_status=10)
+                qs = Activity.objects.filter(processing_status=10, object_uri=options['uri'])
             else:
                 ## Marking these items for processing
-                Activity.objects.filter(processing_status=0).update(processing_status=10)
+                ## FIXME for multiprocessing we need to
+                ## mark which process it was acquired by.
+                await Activity.objects.filter(processing_status=0).aupdate(processing_status=10)
                 qs = Activity.objects.filter(processing_status=10).order_by('-pk')[:100]
             
-            # for activity in qs.iterator(chunk_size=100):
-            for activity in qs:
+            async for activity in qs:
                 self.stderr.write(
                     self.style.SUCCESS(f"DEBUG: Processing: #{activity.id} {activity}")
                 )
@@ -90,17 +92,23 @@ class Command(BaseCommand):
                 ## If is outgoing
                 if activity.incoming == 0:
                     try:
-                        result = asyncio.run(self.federate(request, actor, activity))
+                        result = await self.federate(self._request, self._actor, activity)
                         self.stderr.write(
                             self.style.SUCCESS(f"DEBUG: Federated activity: {result}")
                         )
                     except BaseException as e:
                         self.stderr.write(
-                            self.style.ERROR(f"Processing failed: #{activity.id} {activity}: {e}")
+                            self.style.ERROR(f"Federating failed: #{activity.id} {activity}: {e}")
                         )
+                        if self.isSqlLostException(e):
+                            ## Got exception
+                            ## 'Lost connection to MySQL server during query'
+                            ## Will retry in next iteration
+                            await sync_to_async(close_old_connections)()
+                            continue
                 
                 try:
-                    result = asyncio.run(Replies.fetch_parents(request, activity.object_uri))
+                    result = await Replies.fetch_parents(self._request, activity.object_uri)
                     if (
                         type(result) is dict
                         and 'root' in result
@@ -116,12 +124,17 @@ class Command(BaseCommand):
                     )
                 except BaseException as e:
                     self.stderr.write(
-                        self.style.ERROR(f"ERROR: Processing failed: #{activity.id} {activity}: {e}")
+                        self.style.ERROR(f"ERROR: Fetching root failed: #{activity.id} {activity}: {e}")
                     )
+                    if self.isSqlLostException(e):
+                        ## Got exception
+                        ## 'Lost connection to MySQL server during query'
+                        ## Will retry in next iteration
+                        await sync_to_async(close_old_connections)()
+                        continue
                 
                 ## Processing done
-                Activity.objects.filter(pk=activity.pk).update(processing_status=20)
-                
+                await Activity.objects.filter(pk=activity.pk).aupdate(processing_status=20)
                 self.stderr.write(
                     self.style.SUCCESS(f"Done activity: #{activity.id} {activity}")
                 )
@@ -129,9 +142,9 @@ class Command(BaseCommand):
                 self.stderr.flush()
                 
                 if options['sleep']:
-                    sleep(options['sleep'])
+                    await asyncio.sleep(options['sleep'])
             
-            sleep(options['sleep'] or 1)
+            await asyncio.sleep((options['sleep'] or 1) + 1)
     
     async def federate(self, request, actor, activity):
         now = datetime.now()
@@ -156,3 +169,13 @@ class Command(BaseCommand):
         activity_dict = await actor.prepare_activity(activity_dict)
         activity_dict = await actor.federate(activity_dict)
         return await save_activity(request, activity_dict)
+    
+    @staticmethod
+    def isSqlLostException(exception):
+        '''Checks if exception is for 'lost connection'.
+        exception: exception object.'''
+        
+        if hasattr(e, 'args') and len(e.args) and e.args[0] == 2013:
+            return True
+        return False
+    

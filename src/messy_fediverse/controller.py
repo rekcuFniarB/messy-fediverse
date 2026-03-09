@@ -1201,7 +1201,7 @@ class OrderedItemsView(View):
         
         return d
     
-    def allowed(self):
+    async def allowed(self):
         return True
     
     def get_request_url(self, request, with_query_string=True):
@@ -1251,7 +1251,9 @@ class OrderedItemsView(View):
         
         qs_prev_page = None
         ## Getting total count
-        cache_key = f'count-{id(qs.query.__str__())}'
+        get_sql_str = sync_to_async(lambda q: str(q.query))
+        sql_str = await get_sql_str(qs)
+        cache_key = f'count-{id(sql_str)}'
         totalCount = await cache.aget(cache_key)
         if not totalCount:
             if is_json_request(self.request):
@@ -1292,6 +1294,7 @@ class OrderedItemsView(View):
             qs = qs.order_by('-pk')
         else:
             qs = qs.order_by('pk')
+        
         ## Applying limit
         qs = qs[0:self.limit+1]
         qs.totalCount = totalCount
@@ -1300,7 +1303,7 @@ class OrderedItemsView(View):
         return qs
     
     async def get(self, request, *args, **kwargs):
-        if not self.allowed():
+        if not await self.allowed():
             raise PermissionDenied
             
         self.set_filter(request, *args, **kwargs)
@@ -1505,7 +1508,7 @@ class Outbox(OrderedItemsView):
         
         return self.query_filter
     
-    def allowed(self):
+    async def allowed(self):
         if is_json_request(self.request):
             return True
         
@@ -1632,6 +1635,138 @@ class Outbox(OrderedItemsView):
                     and not first_item.get('inReplyTo').startswith(f'{proto}://{request.site.domain}')
                 ):
                     data['original_thread_url'] = first_item.get('inReplyTo')
+        
+        return data
+
+class GlobalFeed(OrderedItemsView):
+    model = Activity
+    template = 'messy/fediverse/replies.html'
+    pageTitle = 'Global Posts'
+    pageClass = 'messy-fediverse-page-posts'
+    # pageClass = 'messy-fediverse-page-threads'
+    
+    def set_filter(self, request, *args, **kwargs):
+        q_params = {}
+        
+        self.query_filter = Q(
+            Q(activity_type='CRE') | Q(activity_type='UPD'),
+            ## Ignore deleted, e.g.
+            ## there are no acvitities with
+            ## 'Delete' type.
+            ~Exists(self.model.objects.filter(
+                activity_type='DEL',
+                object_uri=OuterRef('object_uri')
+            )),
+            ## Excluding older objects if
+            ## there are updated ones.
+            ## (e.g. we keep last one)
+            ~Exists(self.model.objects.filter(
+                object_uri=OuterRef('object_uri'),
+                pk__gt=OuterRef('pk')
+            )),
+            activity_data__object__type='Note',
+            activity_data__object__inReplyTo=None,
+            disabled=False,
+            incoming=True,
+            **q_params
+        )
+        
+        return self.query_filter
+    
+    async def allowed(self):
+        if is_json_request(self.request):
+            return True
+        
+        if await request_user_is_authenticated(self.request):
+            return True
+        
+        return False
+    
+    async def postprocess(self, request, data):
+        if is_json_request(request):
+            return data
+        
+        proto = request_protocol(request)
+        data['user_is_staff'] = await request_user_is_staff(request)
+        data['user_is_authenticated'] = await request_user_is_authenticated(request)
+        
+        data['items'] = []
+        by_object_uri = {}
+        for n, item in enumerate(data.get('orderedItems', [])):
+            apobject = item.get('object')
+            if type(apobject) is dict:
+                by_object_uri[apobject.get('id')] = n
+                
+                if 'published' in apobject:
+                    apobject['published'] = datetime.fromisoformat(apobject['published'].rstrip('Z'))
+                
+                if 'replies' not in apobject:
+                    apobject['replies'] = reversepath('replies', urlparse(apobject['id']).path)
+        
+        ## Checking for updated activities
+        subq = (
+            self.model.objects.filter(
+                object_uri__in=by_object_uri.keys(),
+                # incoming=False,
+                disabled=False,
+                activity_type='UPD'
+            )
+            .values('object_uri')
+            .annotate(max_id=DbMax('pk'))
+            .values('max_id')
+        )
+        updated_activities_qs = Activity.objects.filter(pk__in=subq)
+        
+        async for _item in updated_activities_qs:
+            _item = await self.object_to_dict(_item, self.select)
+            ## I don't remember the purpose of it
+            if len(_item) == 1:
+                _item = tuple(_item.values())[0]
+            
+            apobject = _item.get('object')
+            if type(apobject) is dict:
+                uri = apobject.get('id')
+                if uri and uri in by_object_uri:
+                    ## Setting updated item we found
+                    old = data['orderedItems'][by_object_uri[uri]].get('object')
+                    apobject['published'] = old.get('published') or apobject.get('published')
+                    apobject['replies'] = old.get('replies') or apobject.get('replies')
+                    data['orderedItems'][by_object_uri[uri]] = _item
+        
+        first_item = None
+        
+        ## For template
+        data['items'] = []
+        for x in data.get('orderedItems', ()):
+            i = {}
+            i.update(x)
+            apobject = i.get('object')
+            if type(apobject) is dict:
+                i.update(apobject)
+            
+            uri = i.get('id', '')
+            if uri.startswith(f'{proto}://{request.site.domain}'):
+                i['is_local'] = True
+            else:
+                i['is_local'] = False
+            
+            if i.get('context'):
+                i['thread_link'] = (reverse('outbox')
+                    + f'?thread={urlquote(i["context"])}')
+            
+            actor = None
+            if 'authorInfo' not in i and 'attributedTo' in i:
+                i['authorInfo'] = {}
+                if not actor:
+                    actor = fediverse_factory(request)
+                try:
+                    i['authorInfo'], = await actor.gather_http_responses(actor.aget(i.get('attributedTo')))
+                except:
+                    pass
+            
+            data['items'].append(i)
+        
+        data['original_thread_url'] = None
         
         return data
 

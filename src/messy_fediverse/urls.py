@@ -10,6 +10,7 @@ urlpatterns = [
     #path('.json', controller.root_json, name='root-json'),
     path('webfinger/', controller.webfinger, name='webfinger'),
     path('outbox/', controller.Outbox.as_view(), name='outbox'),
+    path('global/', controller.GlobalFeed.as_view(), name='global_feed'),
     path('inbox/', controller.Inbox.as_view(), name='inbox'),
     path('featured/', controller.featured, name='featured'),
     path('api/auth/', controller.auth, name='auth'),

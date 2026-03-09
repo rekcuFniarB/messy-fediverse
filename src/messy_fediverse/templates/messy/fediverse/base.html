@@ -8,11 +8,12 @@
     {% block pagetype %}{% endblock %}
     <nav class="messy-fediverse-nav">
         <ul>
-            {% if request.user.is_staff %}
+            {% if request.user.is_authenticated %}
             <li><a href="{% url 'messy-fediverse:interact' %}" class="messy-fediverse-nav-interact">Interact</a></li>
             <li><a href="{% url 'messy-fediverse:following' %}" class="messy-fediverse-nav-following">Following</a></li>
+            <li><a href="{% url 'messy-fediverse:global_feed' %}" class="messy-fediverse-nav-following">Global</a></li>
             {% endif %}
-            <li><a href="{% url 'messy-fediverse:outbox' %}?noreplies=y" class="messy-fediverse-nav-posts">Posts</a></li>
+            <li><a href="{% url 'messy-fediverse:outbox' %}?noreplies=y" class="messy-fediverse-nav-posts">Local</a></li>
             <li><a href="{% url 'messy-fediverse:outbox' %}?threads=y"
                 class="messy-fediverse-nav-threads"
                 title="Comments to threads">Comments</a></li>

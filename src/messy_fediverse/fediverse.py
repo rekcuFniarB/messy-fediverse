@@ -147,7 +147,7 @@ class FediverseActor:
                 ## FIXME cannot reuse already awaited coroutine
             
             name = self.mk_cache_key(name)
-            return await sync_to_async(self.__cache__.set)(name, value)
+            return await self.__cache__.aset(name, value)
     
     @property
     def user(self):
@@ -282,14 +282,16 @@ class FediverseActor:
         '''
         data = None
         cache_key = self.mk_cache_key(url)
+        if url.startswith('https://www.w3.org'):
+            return None
         
         if self.__cache__ is not None and not self.is_internal_uri(cache_key):
-            data = await sync_to_async(self.__cache__.get)(cache_key, None)
+            data = await self.__cache__.aget(cache_key, None)
         
         if data is None:
             ## Returns coroutine
             ## We don't await here because of batch requests gathered at once
-            result = self.get(url, session, *args, **kwargs)
+            result = await self.get(url, session, *args, **kwargs)
             self.stderrlog('NO CACHE FOR', cache_key)
         else:
             ## Got data from cache
@@ -297,8 +299,9 @@ class FediverseActor:
                 ## Mark that we got if from the cache
                 ## to skip caching again
                 data['_cached'] = True
-            result = self.mkcoroutine(data)
-            self.stderrlog('GOT FROM CACHE:', url);
+            # result = self.mkcoroutine(data)
+            self.stderrlog('GOT FROM CACHE:', url)
+            return data
         
         return result
     
@@ -350,8 +353,12 @@ class FediverseActor:
         ## Updates kwargs with http signature
         self.sign_request(url, method, kwargs)
         
+        timeout = 30.0
+        if method != 'get':
+            timeout = 60.0
+        
         ## Returns coroutine
-        return getattr(session, method)(url, timeout=60.0, *args, **kwargs)
+        return getattr(session, method)(url, timeout=timeout, *args, **kwargs)
     
     @staticmethod
     def is_coroutine(self, something):
@@ -381,16 +388,17 @@ class FediverseActor:
         return_exceptions = True ## not self.__DEBUG__
         urls = []
         tasks = await asyncio.gather(*tasks, return_exceptions=return_exceptions)
-        if all([asyncio.iscoroutine(x) or asyncio.isfuture(x) for x in tasks]):
-            ## Probably all are results of self.aget()
-            return await self.gather_http_responses(*tasks)
+        # if all([asyncio.iscoroutine(x) or isinstance(x, asyncio.Future) for x in tasks]):
+        #     ## Probably all are results of self.aget()
+        #     # tasks = await asyncio.gather(*tasks, return_exceptions=return_exceptions)
+        #     return await self.gather_http_responses(*tasks)
         
         for n, response in enumerate(tasks):
-            while asyncio.iscoroutine(response) or asyncio.isfuture(response):
-                ## self.get() and self.aget() are mixed in one batch request?
-                response = await response
-                tasks[n] = response
-                self.stderrlog('DEBUG', 'WARNING UNEXPECTED COROUTNE:', response)
+            # while asyncio.iscoroutine(response) or asyncio.isfuture(response):
+            #     ## self.get() and self.aget() are mixed in one batch request?
+            #     response = await response
+            #     tasks[n] = response
+            #     self.stderrlog('DEBUG', 'WARNING UNEXPECTED COROUTNE:', response)
             
             result = None
             

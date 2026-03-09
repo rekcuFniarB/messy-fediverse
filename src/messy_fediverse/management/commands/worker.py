@@ -90,7 +90,7 @@ class Command(BaseCommand):
                 )
                 
                 ## If is outgoing
-                if activity.incoming == 0:
+                if not activity.incoming:
                     try:
                         result = await self.federate(self._request, self._actor, activity)
                         self.stderr.write(
@@ -133,11 +133,27 @@ class Command(BaseCommand):
                         await sync_to_async(close_old_connections)()
                         continue
                 
-                ## Processing done
-                await Activity.objects.filter(pk=activity.pk).aupdate(processing_status=20)
-                self.stderr.write(
-                    self.style.SUCCESS(f"Done activity: #{activity.id} {activity}")
-                )
+                is_done = True
+                
+                ## If is outgoing
+                if not activity.incoming:
+                    # activity.refresh_from_db()
+                    ## Until django 5.1 it requires sync_to_async,
+                    ## so using aget instead.
+                    activity = await Activity.objects.aget(pk=activity.pk)
+                    activity_dict = await activity.get_dict()
+                    is_done = not self.isFederatingNeeded(activity_dict)
+                    if not is_done:
+                        self.stderr.write(
+                            self.style.WARNING(f"Will retry activity: #{activity.id} {activity}")
+                        )
+                    
+                if is_done:
+                    ## Processing done
+                    await Activity.objects.filter(pk=activity.pk).aupdate(processing_status=20)
+                    self.stderr.write(
+                        self.style.SUCCESS(f"Done activity: #{activity.id} {activity}")
+                    )
                 
                 self.stderr.flush()
                 
@@ -147,19 +163,18 @@ class Command(BaseCommand):
             await asyncio.sleep((options['sleep'] or 1) + 1)
     
     async def federate(self, request, actor, activity):
+        '''Federate job function.
+        request: django request object.
+        actor: fediverse.FediverseActor instance.
+        activity: models.Activity instance.
+        '''
         now = datetime.now()
         activity_dict = await activity.get_dict()
         activity_ts = datetime.fromisoformat(
             activity_dict.get('published', '1970-01-01').replace('Z', '')
         )
-        if (
-            'failedRequests' in activity_dict
-            or '_failedRequests' in activity_dict
-            or 'endpointsResults' in activity_dict
-            or '_endpointsResults' in activity_dict
-            or '_response' in activity_dict
-            or now.timestamp() - activity_ts.timestamp() > 60 * 60 * 24 * 90
-        ):
+        
+        if not self.isFederatingNeeded(activity_dict):
             ## Already federated or too old
             self.stderr.write(
                 self.style.SUCCESS(f"DEBUG: NOT federating: #{activity.id} {activity}")
@@ -177,5 +192,21 @@ class Command(BaseCommand):
         
         if hasattr(e, 'args') and len(e.args) and e.args[0] == 2013:
             return True
+        return False
+    
+    @staticmethod
+    def isFederatingNeeded(activity_dict):
+        '''Check if should retry to federate
+        activity_dict: dict'''
+        if (
+            '_requestAttempt' not in activity_dict
+            or (
+                ## There are failed requests and not attempt done
+                activity_dict['_requestAttempt'] < 3
+                and len(activity_dict.get('_failedRequests', {}))
+            )
+        ):
+            return True
+        
         return False
     

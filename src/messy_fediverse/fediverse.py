@@ -649,62 +649,66 @@ class FediverseActor:
         # if 'object' not in activity or 'tag' not in activity['object']:
         #     return False
         
-        endpoints = []
         results = []
+        ## If not empty, we retry failed requests.
+        endpoints = list(activity.get('_failedRequests', {}))
         
-        ## FIXME we should be independent of django models
-        if hasattr(self, 'federated_endpoints'):
-            async for endpoint in self.federated_endpoints.aiterator():
-                if endpoint.uri not in endpoints:
-                    endpoints.append(endpoint.uri)
-        
-        act_object = activity.get('object')
-        if type(act_object) is dict:
-            if 'tag' in act_object:
-                for tag in act_object['tag']:
-                    if tag.get('type') == 'Mention' and 'href' in tag and tag['href'] != self.id:
-                        results.append(self.aget(tag['href']))
+        if not len(endpoints):
+            ## FIXME we should be independent of django models
+            if hasattr(self, 'federated_endpoints'):
+                async for endpoint in self.federated_endpoints.aiterator():
+                    if endpoint.uri not in endpoints:
+                        endpoints.append(endpoint.uri)
             
-            for to in (act_object.get('to', []) + act_object.get('cc', [])):
+            ## Collecting endpoints of mentioned users
+            act_object = activity.get('object')
+            if type(act_object) is dict:
+                if 'tag' in act_object:
+                    for tag in act_object['tag']:
+                        if tag.get('type') == 'Mention' and 'href' in tag and tag['href'] != self.id:
+                            results.append(self.aget(tag['href']))
+                
+                for to in (act_object.get('to', []) + act_object.get('cc', [])):
+                    if 'www.w3.org' in to or to in results:
+                        continue
+                    results.append(self.aget(to))
+            
+            for to in (activity.get('to', []) + activity.get('cc', [])):
                 if 'www.w3.org' in to or to in results:
                     continue
                 results.append(self.aget(to))
-        
-        for to in (activity.get('to', []) + activity.get('cc', [])):
-            if 'www.w3.org' in to or to in results:
-                continue
-            results.append(self.aget(to))
-        
-        if len(results) > 0:
-            results = await self.gather_http_responses(*results)
-        
-        for user in results:
-            endpoint = None
-            if type(user) is dict and 'endpoints' in user and 'sharedInbox' in user['endpoints']:
-                endpoint = user['endpoints']['sharedInbox']
-            elif 'inbox' in user:
-                ## I saw instances without sharedInbox, at least Honk
-                endpoint = user['inbox']
             
-            if type(endpoint) is list and len(endpoint) > 0:
-                ## Never saw such case but anyway...
-                endpoint = endpoint[0]
+            if len(results) > 0:
+                results = await self.gather_http_responses(*results)
             
-            if endpoint:
-                if endpoint not in endpoints:
-                    endpoints.append(endpoint)
+            for user in results:
+                endpoint = None
+                if type(user) is dict and 'endpoints' in user and 'sharedInbox' in user['endpoints']:
+                    endpoint = user['endpoints']['sharedInbox']
+                elif 'inbox' in user:
+                    ## I saw instances without sharedInbox, at least Honk
+                    endpoint = user['inbox']
                 
-                if (
-                    type(act_object) is dict
-                    and user['id'] not in act_object['cc']
-                    and user['id'] not in act_object['to']
-                ):
-                    act_object['cc'].append(user['id'])
-                if (
-                    user['id'] not in activity['cc']
-                    and user['id'] not in activity['to']
-                ):
-                    activity['cc'].append(user['id'])
+                if type(endpoint) is list and len(endpoint) > 0:
+                    ## Never saw such case but anyway...
+                    endpoint = endpoint[0]
+                
+                if endpoint:
+                    if endpoint not in endpoints:
+                        endpoints.append(endpoint)
+                    
+                    if (
+                        type(act_object) is dict
+                        and user['id'] not in act_object['cc']
+                        and user['id'] not in act_object['to']
+                    ):
+                        act_object['cc'].append(user['id'])
+                    if (
+                        user['id'] not in activity['cc']
+                        and user['id'] not in activity['to']
+                    ):
+                        activity['cc'].append(user['id'])
+            ## if len(endpoints)
         
         results = []
         
@@ -727,6 +731,11 @@ class FediverseActor:
         ## Restoring private props
         activity.update(activity_priv_props)
         
+        attempt_n = activity.get('_requestAttempt', 0)
+        if attempt_n:
+            ## Saving previous requests info
+            activity[f'_endpointsResults.{attempt_n}'] = activity.get('_endpointsResults', {})
+            activity[f'_failedRequests.{attempt_n}'] = activity.get('_failedRequests', {})
         activity['_endpointsResults'] = {}
         activity['_failedRequests'] = {}
         
@@ -738,7 +747,12 @@ class FediverseActor:
         
         ## For debug
         if self.__DEBUG__:
+            if attempt_n:
+                activity[f'_requestEndpoints.{attempt_n}'] = activity.get('_requestEndpoints', {})
             activity['_requestEndpoints'] = endpoints
+        
+        attempt_n += 1
+        activity['_requestAttempt'] = attempt_n
         
         return activity
     

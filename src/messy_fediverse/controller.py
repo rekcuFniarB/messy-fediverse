@@ -1623,6 +1623,8 @@ class Outbox(OrderedItemsView):
                     not data['original_thread_url']
                     and is_url(first_item.get('context', ''))
                     and not first_item.get('context').startswith(f'{proto}://{request.site.domain}')
+                    ## mastodon uses context for storing replies to thread now.
+                    and 'context' not in first_item.get('context')
                 ):
                     data['original_thread_url'] = first_item.get('context')
                 

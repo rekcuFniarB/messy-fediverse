@@ -71,3 +71,6 @@
 .messy-fediverse-page-threads   ~ nav .messy-fediverse-nav-threads {
     border-top: 1px solid #333;
 }
+.messy-fediverse-page-global_feed ~ nav .messy-fediverse-nav-global {
+    border-top: 1px solid #333;
+}

@@ -1644,7 +1644,7 @@ class GlobalFeed(OrderedItemsView):
     model = Activity
     template = 'messy/fediverse/replies.html'
     pageTitle = 'Global Posts'
-    pageClass = 'messy-fediverse-page-posts'
+    pageClass = 'messy-fediverse-page-global_feed'
     # pageClass = 'messy-fediverse-page-threads'
     
     def set_filter(self, request, *args, **kwargs):

@@ -136,7 +136,7 @@ class Activity(models.Model):
     @classmethod
     async def get_note_activity(cls, object_uri, fediverseUser):
         '''
-        Get "None" activity by object_uri.
+        Get "Note" activity by object_uri.
         object_uri: string object URI
         fedierseUser: object, Fediverse instance.
         Returns Activity instance.

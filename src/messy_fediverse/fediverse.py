@@ -147,7 +147,7 @@ class FediverseActor:
                 ## FIXME cannot reuse already awaited coroutine
             
             name = self.mk_cache_key(name)
-            return await sync_to_async(self.__cache__.set)(name, value)
+            return await self.__cache__.aset(name, value)
     
     @property
     def user(self):
@@ -282,14 +282,16 @@ class FediverseActor:
         '''
         data = None
         cache_key = self.mk_cache_key(url)
+        if url.startswith('https://www.w3.org'):
+            return None
         
         if self.__cache__ is not None and not self.is_internal_uri(cache_key):
-            data = await sync_to_async(self.__cache__.get)(cache_key, None)
+            data = await self.__cache__.aget(cache_key, None)
         
         if data is None:
             ## Returns coroutine
             ## We don't await here because of batch requests gathered at once
-            result = self.get(url, session, *args, **kwargs)
+            result = await self.get(url, session, *args, **kwargs)
             self.stderrlog('NO CACHE FOR', cache_key)
         else:
             ## Got data from cache
@@ -297,8 +299,9 @@ class FediverseActor:
                 ## Mark that we got if from the cache
                 ## to skip caching again
                 data['_cached'] = True
-            result = self.mkcoroutine(data)
-            self.stderrlog('GOT FROM CACHE:', url);
+            # result = self.mkcoroutine(data)
+            self.stderrlog('GOT FROM CACHE:', url)
+            return data
         
         return result
     
@@ -350,8 +353,12 @@ class FediverseActor:
         ## Updates kwargs with http signature
         self.sign_request(url, method, kwargs)
         
+        timeout = 30.0
+        if method != 'get':
+            timeout = 60.0
+        
         ## Returns coroutine
-        return getattr(session, method)(url, timeout=60.0, *args, **kwargs)
+        return getattr(session, method)(url, timeout=timeout, *args, **kwargs)
     
     @staticmethod
     def is_coroutine(self, something):
@@ -381,16 +388,17 @@ class FediverseActor:
         return_exceptions = True ## not self.__DEBUG__
         urls = []
         tasks = await asyncio.gather(*tasks, return_exceptions=return_exceptions)
-        if all([asyncio.iscoroutine(x) or asyncio.isfuture(x) for x in tasks]):
-            ## Probably all are results of self.aget()
-            return await self.gather_http_responses(*tasks)
+        # if all([asyncio.iscoroutine(x) or isinstance(x, asyncio.Future) for x in tasks]):
+        #     ## Probably all are results of self.aget()
+        #     # tasks = await asyncio.gather(*tasks, return_exceptions=return_exceptions)
+        #     return await self.gather_http_responses(*tasks)
         
         for n, response in enumerate(tasks):
-            while asyncio.iscoroutine(response) or asyncio.isfuture(response):
-                ## self.get() and self.aget() are mixed in one batch request?
-                response = await response
-                tasks[n] = response
-                self.stderrlog('DEBUG', 'WARNING UNEXPECTED COROUTNE:', response)
+            # while asyncio.iscoroutine(response) or asyncio.isfuture(response):
+            #     ## self.get() and self.aget() are mixed in one batch request?
+            #     response = await response
+            #     tasks[n] = response
+            #     self.stderrlog('DEBUG', 'WARNING UNEXPECTED COROUTNE:', response)
             
             result = None
             
@@ -649,62 +657,66 @@ class FediverseActor:
         # if 'object' not in activity or 'tag' not in activity['object']:
         #     return False
         
-        endpoints = []
         results = []
+        ## If not empty, we retry failed requests.
+        endpoints = list(activity.get('_failedRequests', {}))
         
-        ## FIXME we should be independent of django models
-        if hasattr(self, 'federated_endpoints'):
-            async for endpoint in self.federated_endpoints.aiterator():
-                if endpoint.uri not in endpoints:
-                    endpoints.append(endpoint.uri)
-        
-        act_object = activity.get('object')
-        if type(act_object) is dict:
-            if 'tag' in act_object:
-                for tag in act_object['tag']:
-                    if tag.get('type') == 'Mention' and 'href' in tag and tag['href'] != self.id:
-                        results.append(self.aget(tag['href']))
+        if not len(endpoints):
+            ## FIXME we should be independent of django models
+            if hasattr(self, 'federated_endpoints'):
+                async for endpoint in self.federated_endpoints.aiterator():
+                    if endpoint.uri not in endpoints:
+                        endpoints.append(endpoint.uri)
             
-            for to in (act_object.get('to', []) + act_object.get('cc', [])):
+            ## Collecting endpoints of mentioned users
+            act_object = activity.get('object')
+            if type(act_object) is dict:
+                if 'tag' in act_object:
+                    for tag in act_object['tag']:
+                        if tag.get('type') == 'Mention' and 'href' in tag and tag['href'] != self.id:
+                            results.append(self.aget(tag['href']))
+                
+                for to in (act_object.get('to', []) + act_object.get('cc', [])):
+                    if 'www.w3.org' in to or to in results:
+                        continue
+                    results.append(self.aget(to))
+            
+            for to in (activity.get('to', []) + activity.get('cc', [])):
                 if 'www.w3.org' in to or to in results:
                     continue
                 results.append(self.aget(to))
-        
-        for to in (activity.get('to', []) + activity.get('cc', [])):
-            if 'www.w3.org' in to or to in results:
-                continue
-            results.append(self.aget(to))
-        
-        if len(results) > 0:
-            results = await self.gather_http_responses(*results)
-        
-        for user in results:
-            endpoint = None
-            if type(user) is dict and 'endpoints' in user and 'sharedInbox' in user['endpoints']:
-                endpoint = user['endpoints']['sharedInbox']
-            elif 'inbox' in user:
-                ## I saw instances without sharedInbox, at least Honk
-                endpoint = user['inbox']
             
-            if type(endpoint) is list and len(endpoint) > 0:
-                ## Never saw such case but anyway...
-                endpoint = endpoint[0]
+            if len(results) > 0:
+                results = await self.gather_http_responses(*results)
             
-            if endpoint:
-                if endpoint not in endpoints:
-                    endpoints.append(endpoint)
+            for user in results:
+                endpoint = None
+                if type(user) is dict and 'endpoints' in user and 'sharedInbox' in user['endpoints']:
+                    endpoint = user['endpoints']['sharedInbox']
+                elif 'inbox' in user:
+                    ## I saw instances without sharedInbox, at least Honk
+                    endpoint = user['inbox']
                 
-                if (
-                    type(act_object) is dict
-                    and user['id'] not in act_object['cc']
-                    and user['id'] not in act_object['to']
-                ):
-                    act_object['cc'].append(user['id'])
-                if (
-                    user['id'] not in activity['cc']
-                    and user['id'] not in activity['to']
-                ):
-                    activity['cc'].append(user['id'])
+                if type(endpoint) is list and len(endpoint) > 0:
+                    ## Never saw such case but anyway...
+                    endpoint = endpoint[0]
+                
+                if endpoint:
+                    if endpoint not in endpoints:
+                        endpoints.append(endpoint)
+                    
+                    if (
+                        type(act_object) is dict
+                        and user['id'] not in act_object['cc']
+                        and user['id'] not in act_object['to']
+                    ):
+                        act_object['cc'].append(user['id'])
+                    if (
+                        user['id'] not in activity['cc']
+                        and user['id'] not in activity['to']
+                    ):
+                        activity['cc'].append(user['id'])
+            ## if len(endpoints)
         
         results = []
         
@@ -727,6 +739,11 @@ class FediverseActor:
         ## Restoring private props
         activity.update(activity_priv_props)
         
+        attempt_n = activity.get('_requestAttempt', 0)
+        if attempt_n:
+            ## Saving previous requests info
+            activity[f'_endpointsResults.{attempt_n}'] = activity.get('_endpointsResults', {})
+            activity[f'_failedRequests.{attempt_n}'] = activity.get('_failedRequests', {})
         activity['_endpointsResults'] = {}
         activity['_failedRequests'] = {}
         
@@ -738,7 +755,12 @@ class FediverseActor:
         
         ## For debug
         if self.__DEBUG__:
+            if attempt_n:
+                activity[f'_requestEndpoints.{attempt_n}'] = activity.get('_requestEndpoints', {})
             activity['_requestEndpoints'] = endpoints
+        
+        attempt_n += 1
+        activity['_requestAttempt'] = attempt_n
         
         return activity
     

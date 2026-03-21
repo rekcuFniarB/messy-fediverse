@@ -1666,8 +1666,13 @@ class GlobalFeed(OrderedItemsView):
                 object_uri=OuterRef('object_uri'),
                 pk__gt=OuterRef('pk')
             )),
+            (
+                ## inReplyTo is null
+                Q(activity_data__object__inReplyTo=None)
+                ## inReplyTo property is missing
+                | Q(activity_data__object__inReplyTo__isnull=True)
+            ),
             activity_data__object__type='Note',
-            activity_data__object__inReplyTo=None,
             disabled=False,
             incoming=True,
             **q_params

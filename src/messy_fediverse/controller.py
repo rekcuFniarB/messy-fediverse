@@ -215,7 +215,7 @@ async def email_notice(request, activity):
     if is_url(ap_object):
         url = ap_object
         ## Trying to get object content
-        ap_object, = await fediverse.gather_http_responses(fediverse.aget(ap_object))
+        ap_object = await fediverse.aget(ap_object)
     
     if type(ap_object) is not dict:
         stderrlog('EMAIL NOTICE ERROR: AP object is', ap_object, 'URL:', url)
@@ -231,7 +231,7 @@ async def email_notice(request, activity):
             if 'authorInfo' not in activity:
                 activity['authorInfo'] = {}
                 try:
-                    activity['authorInfo'], = await fediverse.gather_http_responses(fediverse.aget(attributedTo))
+                    activity['authorInfo'] = await fediverse.aget(attributedTo)
                 except:
                     pass
             
@@ -553,7 +553,7 @@ async def save_activity(request, activity):
             ## If follow request
             follower = await Follower.objects.filter(uri=act.actor_uri, object_uri=object_id).afirst()
             ## Retrieving actor info from the net
-            actorInfo, = await fediverse.gather_http_responses(fediverse.aget(act.actor_uri))
+            actorInfo = await fediverse.aget(act.actor_uri)
             ## If actor info is valid
             endpoint_url = None
             if type(actorInfo) is dict:
@@ -607,9 +607,7 @@ async def send_accept_follow(request, follower):
     response = None
     session = None
     
-    actorInfo, = await fediverse.gather_http_responses(
-        fediverse.aget(follower.uri, session=session)
-    )
+    actorInfo = await fediverse.aget(follower.uri, session=session)
     
     if type(actorInfo) is not dict:
         if isinstance(actorInfo, BaseException):
@@ -830,7 +828,7 @@ class Replies(View):
                 
                 if 'authorInfo' not in apobject or not apobject['authorInfo']:
                     if 'attributedTo' in apobject and is_url(apobject['attributedTo']):
-                        apobject['authorInfo'], = await fediverse.gather_http_responses(fediverse.aget(apobject['attributedTo']))
+                        apobject['authorInfo'] = await fediverse.aget(apobject['attributedTo'])
                 
                 if not data['summary'] and 'summary' in apobject and apobject['summary']:
                     data['summary'] = apobject['summary']
@@ -875,7 +873,7 @@ class Replies(View):
                 
                 username, host = form.cleaned_data['account'].split('@')
                 
-                webfinger, = await fediverse.gather_http_responses(fediverse.aget(f'https://{host}/.well-known/webfinger?resource=acct:{form.cleaned_data["account"]}'))
+                webfinger = await fediverse.aget(f'https://{host}/.well-known/webfinger?resource=acct:{form.cleaned_data["account"]}')
                 
                 if type(webfinger) is dict and 'links' in webfinger and type(webfinger['links']) is list:
                     for link in webfinger['links']:
@@ -1002,8 +1000,7 @@ class Replies(View):
                 if not actor:
                     actor = fediverse_factory(request)
                 
-                fresponse = actor.aget(uri)
-                ap_object, = await actor.gather_http_responses(fresponse)
+                ap_object = await actor.aget(uri)
                 
                 if type(ap_object) is dict:
                     ## Making pseudo activity
@@ -1031,8 +1028,7 @@ class Replies(View):
                 if not actor:
                     actor = fediverse_factory(request)
                 
-                fresponse = actor.aget(ap_object)
-                ap_object, = await actor.gather_http_responses(fresponse)
+                ap_object = await actor.aget(ap_object)
             
             uri = None
             
@@ -1107,7 +1103,7 @@ class Inbox(View):
             # result = await fediverse.process_object(data)
             # data['_json'] = result
             if 'actor' in data and 'authorInfo' not in data and 'authorInfo' not in data.get('object', {}):
-                data['authorInfo'], = await fediverse.gather_http_responses(fediverse.aget(data['actor']))
+                data['authorInfo'] = await fediverse.aget(data['actor'])
             
             should_log_request = False
             saveResult = save_activity(request, data)
@@ -1596,7 +1592,7 @@ class Outbox(OrderedItemsView):
                 if not actor:
                     actor = fediverse_factory(request)
                 try:
-                    i['authorInfo'], = await actor.gather_http_responses(actor.aget(i.get('attributedTo')))
+                    i['authorInfo'] = await actor.aget(i.get('attributedTo'))
                 except:
                     pass
             
@@ -1767,7 +1763,7 @@ class GlobalFeed(OrderedItemsView):
                 if not actor:
                     actor = fediverse_factory(request)
                 try:
-                    i['authorInfo'], = await actor.gather_http_responses(actor.aget(i.get('attributedTo')))
+                    i['authorInfo'] = await actor.aget(i.get('attributedTo'))
                 except:
                     pass
             
@@ -1993,8 +1989,7 @@ class Interact(View):
         }
         
         if acct:
-            fresponse = fediverse.aget(acct)
-            data, = await fediverse.gather_http_responses(fresponse)
+            data = await fediverse.aget(acct)
             if type(data) is not dict:
                 if type(data) is str:
                     data = strip_tags(data)
@@ -2069,7 +2064,7 @@ class Interact(View):
                             tasks.append(fediverse.aget(item))
                         elif type(item) is dict and 'id' in item:
                             tasks.append(fediverse.aget(item['id']))
-            tasks = await fediverse.gather_http_responses(*tasks)
+            tasks = await asyncio.gather(*tasks)
             
             for user_obj in tasks:
                 ## If is user object
@@ -2139,7 +2134,7 @@ class Interact(View):
             
             ## If we are replying
             elif uri_interact:
-                ap_object, = await fediverse.gather_http_responses(fediverse.aget(form.cleaned_data['link']))
+                ap_object = await fediverse.aget(form.cleaned_data['link'])
                 #ap_object = cache.get(form.cleaned_data['link'], sentinel)
                 if ap_object is sentinel:
                     raise BadRequest(f'Object "{form.cleaned_data["link"]}" has been lost, try again.')

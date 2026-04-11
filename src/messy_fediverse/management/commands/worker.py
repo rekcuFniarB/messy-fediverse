@@ -9,6 +9,7 @@ import asyncio
 from asgiref.sync import sync_to_async
 from time import sleep
 from datetime import datetime
+# import tracemalloc
 
 class Command(BaseCommand):
     help = 'Worker process'
@@ -46,6 +47,8 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         url = None
         site = None
+        ## For debugging forgotten to await.
+        # tracemalloc.start()
         
         if options['debug']:
             settings.DEBUG = True
@@ -106,6 +109,8 @@ class Command(BaseCommand):
                             ## Will retry in next iteration
                             await sync_to_async(close_old_connections)()
                             continue
+                        else:
+                            raise
                 
                 try:
                     result = await Replies.fetch_parents(self._request, activity.object_uri)
@@ -132,6 +137,8 @@ class Command(BaseCommand):
                         ## Will retry in next iteration
                         await sync_to_async(close_old_connections)()
                         continue
+                    else:
+                        raise
                 
                 is_done = True
                 
@@ -190,7 +197,7 @@ class Command(BaseCommand):
         '''Checks if exception is for 'lost connection'.
         exception: exception object.'''
         
-        if hasattr(e, 'args') and len(e.args) and e.args[0] == 2013:
+        if hasattr(exception, 'args') and len(exception.args) and exception.args[0] == 2013:
             return True
         return False
     

@@ -224,7 +224,7 @@ class VerifySignature:
             fediverse = fediverse_factory(request)
             
             try:
-                actor, = await fediverse.gather_http_responses(fediverse.aget(signature['keyId']))
+                actor = await fediverse.aget(signature['keyId'])
             except BaseException as e:
                 if settings.DEBUG:
                     ## Raise original exception (probably HTTPError)

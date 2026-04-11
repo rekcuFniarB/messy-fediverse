@@ -289,21 +289,28 @@ class FediverseActor:
             data = await self.__cache__.aget(cache_key, None)
         
         if data is None:
-            ## Returns coroutine
-            ## We don't await here because of batch requests gathered at once
-            result = await self.get(url, session, *args, **kwargs)
+            ## No cached data, getting from network.
             self.stderrlog('NO CACHE FOR', cache_key)
+            data, = await self.gather_http_responses(self.get(url, session, *args, **kwargs))
+            
+            if type(data) is dict:
+                ## FIXME why is it here?
+                if 'type' in data and data['type'] == 'Person':
+                    person_url = urlparse(data['id'])
+                    if 'preferredUsername' in data:
+                        data['user@host'] = f'{data["preferredUsername"]}@{person_url.hostname}'
+                
+                self.stderrlog('SETTING CACHE:', url)
+                await self.cache_set(url, data)
         else:
             ## Got data from cache
             if type(data) is dict:
                 ## Mark that we got if from the cache
                 ## to skip caching again
                 data['_cached'] = True
-            # result = self.mkcoroutine(data)
             self.stderrlog('GOT FROM CACHE:', url)
-            return data
         
-        return result
+        return data
     
     def get(self, url, session=None, *args, **kwargs):
         '''
@@ -355,7 +362,7 @@ class FediverseActor:
         
         timeout = 30.0
         if method != 'get':
-            timeout = 60.0
+            timeout = 90.0
         
         ## Returns coroutine
         return getattr(session, method)(url, timeout=timeout, *args, **kwargs)
@@ -377,6 +384,32 @@ class FediverseActor:
                 return result
             return coro(result)
     
+    async def _fetch_request(self, context_manager):
+        content = None
+        url = None
+        try:
+            async with context_manager as response:
+                url = response.url
+                # Always read the body first so it's available for success or error
+                if 'json' in response.headers.get('content-type', ''):
+                    try:
+                        content = await response.json()
+                    except Exception:
+                        content = await response.text()
+                else:
+                    content = await response.text()
+
+                if not response.ok:
+                    # If not 200/OK, create an exception but attach the actual content
+                    content = Exception(f'HTTP {response.status}: {response.reason}',
+                        f'URL: {response.url}', content[:128])
+
+        except Exception as e:
+            # This catches network/timeout errors
+            content = e
+    
+        return {'url': url, 'response': content}
+    
     async def gather_http_responses(self, *tasks):
         '''
         Gathers multiple async requests.
@@ -385,83 +418,24 @@ class FediverseActor:
         if not len(tasks):
             return tasks
         
+        ts_started = datetime.now().timestamp()
+        
         return_exceptions = True ## not self.__DEBUG__
-        urls = []
+        tasks = [self._fetch_request(t) for t in tasks]
         tasks = await asyncio.gather(*tasks, return_exceptions=return_exceptions)
-        # if all([asyncio.iscoroutine(x) or isinstance(x, asyncio.Future) for x in tasks]):
-        #     ## Probably all are results of self.aget()
-        #     # tasks = await asyncio.gather(*tasks, return_exceptions=return_exceptions)
-        #     return await self.gather_http_responses(*tasks)
-        
-        for n, response in enumerate(tasks):
-            # while asyncio.iscoroutine(response) or asyncio.isfuture(response):
-            #     ## self.get() and self.aget() are mixed in one batch request?
-            #     response = await response
-            #     tasks[n] = response
-            #     self.stderrlog('DEBUG', 'WARNING UNEXPECTED COROUTNE:', response)
-            
-            result = None
-            
-            if not hasattr(response, 'headers') or not hasattr(response, 'ok'):
-                ## Not a respone object. May be a dict from cache or exception
-                result = self.mkcoroutine(response)
-            elif not response.ok:
-                response_text = '-'
-                try:
-                    response_text = await response.text()
-                except BaseException as e:
-                    response_text = str(e)
-                
-                try:
-                    #self.syslog(f'BAD RESPONSE FOR POST TO URL "{response.url}": "{response_text}"')
-                    response.raise_for_status()
-                except BaseException as e:
-                    e.args = (*e.args, response.status, f'URL: {response.url}',
-                        response_text[:128], f'TS: {datetime.now()}')
-                    result = self.mkcoroutine(e)
-            elif 'content-type' in response.headers and 'application/' in response.headers['content-type'] and 'json' in response.headers['content-type']:
-                ## FIXME Probably try/catch will not work here
-                try:
-                    result = response.json()
-                except:
-                    result = response.text()
-            else:
-                result = response.text()
-            
-            tasks[n] = result
-            urls.append(str(getattr(response, 'url', '')))
-            
-            ## Calling close() if object has such method
-            ## response may be an exception object. In this case we just call bool()
-            #getattr(response, 'close', bool)()
-        
-        tasks = await asyncio.gather(*tasks, return_exceptions=return_exceptions)
-        
-        # for response in tasks:
-        #     ## Calling close() if object has such method
-        #     ## response may be an exception object. In this case we just call bool()
-        #     getattr(response, 'close', bool)()
+        ts_ended = datetime.now().timestamp()
         
         for n, result in enumerate(tasks):
+            url = result['url']
+            result = result['response']
+            tasks[n] = result
             if isinstance(result, BaseException):
                 ## We return exception as string FIXME for debugging
-                errors = [repr(result)]
-                tasks[n] = 'ERROR: %s' % repr(result)
+                tasks[n] = f'ERROR: {repr(result)}; START: {ts_started}; END: {ts_ended}, TIME: {ts_ended-ts_started}'
                 for a in result.args:
                     a = str(a)
                     if a and a not in tasks[n]:
-                        tasks[n] = f'{tasks[n]}, {a}'
-            
-            elif type(result) is dict:
-                ## FIXME why is it here?
-                if 'type' in result and result['type'] == 'Person':
-                    url = urlparse(result['id'])
-                    if 'preferredUsername' in result:
-                        result['user@host'] = f'{result["preferredUsername"]}@{url.hostname}'
-                
-                if '_cached' not in result and urls[n]:
-                    self.stderrlog('SETTING CACHE:', urls[n])
-                    await self.cache_set(urls[n], result)
+                        tasks[n] = f'{tasks[n]}; {a}'
         
         return tasks
     
@@ -539,7 +513,7 @@ class FediverseActor:
                 tasks.append(self.aget(f'https://{server}/.well-known/webfinger?resource=acct:{userid}'))
         userids = _userids
         
-        tasks = await self.gather_http_responses(*tasks)
+        tasks = await asyncio.gather(*tasks, return_exceptions=True)
         
         for n, response in enumerate(tasks):
             userid = userids[n]
@@ -602,7 +576,7 @@ class FediverseActor:
             
         ## If we are replying to some status
         if not reply_to_obj and in_reply_to_uri:
-            reply_to_obj, = await self.gather_http_responses(self.aget(in_reply_to_uri))
+            reply_to_obj = await self.aget(in_reply_to_uri)
         
         if type(reply_to_obj) is dict and activity['type'] != 'Update':
             attributedTo = reply_to_obj.get('attributedTo')
@@ -618,7 +592,7 @@ class FediverseActor:
             if 'attributedToPerson' in reply_to_obj and type(reply_to_obj['attributedToPerson']) is dict:
                 remote_author = reply_to_obj['attributedToPerson']
             elif attributedTo:
-                remote_author, = await self.gather_http_responses(self.aget(attributedTo))
+                remote_author = await self.aget(attributedTo)
             
             if attributedTo:
                 to = (
@@ -635,7 +609,7 @@ class FediverseActor:
                     if t not in activity_obj['to']:
                         activity_obj['to'].append(t)
                 
-                if remote_author:
+                if remote_author and type(remote_author) is dict:
                     remote_author_url = urlparse(remote_author['id'])
                     
                     originMention = {
@@ -687,7 +661,7 @@ class FediverseActor:
                 results.append(self.aget(to))
             
             if len(results) > 0:
-                results = await self.gather_http_responses(*results)
+                results = await asyncio.gather(*results, return_exceptions=True)
             
             for user in results:
                 endpoint = None
@@ -1088,7 +1062,7 @@ class FediverseActor:
         author_info = None
         if 'attributedTo' in apobject:
             try:
-                author_info, = await self.gather_http_responses(self.aget(apobject['attributedTo']))
+                author_info = await self.aget(apobject['attributedTo'])
             except:
                 pass
             
@@ -1165,7 +1139,7 @@ class FediverseActor:
                                         else:
                                             try:
                                                 ## Fixme: make requests at once
-                                                reply['authorInfo'], = await self.gather_http_responses(self.aget(reply['attributedTo']))
+                                                reply['authorInfo'] = await self.aget(reply['attributedTo'])
                                             except:
                                                 reply['authorInfo'] = {'preferredUsername': path.basename(reply['attributedTo'].strip('/'))}
                                 if 'hash' not in reply:
@@ -1220,7 +1194,7 @@ class FediverseActor:
         Send follow request
         user_id: fediverse user URI
         '''
-        remote_author, = await self.gather_http_responses(self.aget(user_id))
+        remote_author = await self.aget(user_id)
         
         activity = self.activity(type='Follow', object=remote_author['id'], to=[remote_author['id']])
         
@@ -1232,7 +1206,7 @@ class FediverseActor:
         return self.save(filename, remote_author)
     
     async def unfollow(self, user_id):
-        remote_author, = await self.gather_http_responses(self.aget(user_id))
+        remote_author = await self.aget(user_id)
         data = {
             'id': path.join(self.id, 'activity', self.uniqid(), ''),
             'actor': self.id,

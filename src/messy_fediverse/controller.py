@@ -1002,26 +1002,27 @@ class Replies(View):
                 
                 ap_object = await actor.aget(uri)
                 
-                if type(ap_object) is dict:
-                    ## Making pseudo activity
-                    # activity_dict = {
-                    #     'id': ('http://localhost/?cached=y&object='
-                    #         + urlquote(ap_object.get('id', ''))),
-                    #     'object': ap_object,
-                    #     'actor': ap_object.get('attributedTo'),
-                    #     'type': 'Create',
-                    #     'cc': ap_object.get('cc'),
-                    #     'to': ap_object.get('to'),
-                    # }
-                    activity_dict = actor.activity(
-                        object=ap_object,
-                        actor=ap_object.get('attributedTo'),
-                        type='Create',
-                        cc=ap_object.get('cc'),
-                        to=ap_object.get('to'),
-                    )
-                else:
+                if type(ap_object) is not dict:
                     stderrlog('WARNING', 'Got bad activity object when fetching thread for ', uri, ap_object)
+                    ## Activity object might be deleted by this moment,
+                    ## we create fake one of type Tombstone
+                    ap_object = {
+                        'content': '<p>Not available.</p>',
+                        '_raw_error_content': ap_object,
+                        'id': uri,
+                        'context': uri,
+                        'attributedTo': 'https://www.w3.org/ns/activitystreams#Public',
+                        'to': 'https://www.w3.org/ns/activitystreams#Public',
+                        'type': 'Tombstone',
+                    }
+                
+                activity_dict = actor.activity(
+                    object=ap_object,
+                    actor=ap_object.get('attributedTo'),
+                    type='Create',
+                    cc=ap_object.get('cc'),
+                    to=ap_object.get('to'),
+                )
             
             ## If activity type was like or similar
             if ap_object and type(ap_object) is not dict:

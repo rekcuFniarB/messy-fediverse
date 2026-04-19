@@ -123,10 +123,14 @@ class Command(BaseCommand):
                         and 'id' in result['root']['object']
                     ):
                         result = result['root']['object']['id']
-                    
-                    self.stderr.write(
-                        self.style.SUCCESS(f"DEBUG: Fetched root: {result}")
-                    )
+                        self.stderr.write(
+                            self.style.SUCCESS(f"DEBUG: Fetched root: {result}")
+                        )
+                    else:
+                        self.stderr.write(
+                            self.style.WARNING(f"ERROR: couldn't fetch root for: {activity.object_uri}")
+                        )
+                
                 except BaseException as e:
                     self.stderr.write(
                         self.style.ERROR(f"ERROR: Fetching root failed: #{activity.id} {activity}: {e}")

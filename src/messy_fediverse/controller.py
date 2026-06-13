@@ -52,7 +52,13 @@ class ActivityResponse(JsonResponse):
                 'default': lambda x: None
             }
         )
-
+    
+    @staticmethod
+    def removePrivateProps(data: dict) -> dict:
+        for prop in list(data.keys()):
+            if prop.startswith('_'):
+                del(data[prop])
+        return data
 
 sentinel = object()
 __cache__ = {}
@@ -228,20 +234,20 @@ async def email_notice(request, activity):
             subj_parts.append(summary)
         attributedTo = ap_object.get('attributedTo', None)
         if attributedTo:
-            if 'authorInfo' not in activity:
-                activity['authorInfo'] = {}
+            if '_authorInfo' not in activity:
+                activity['_authorInfo'] = {}
                 try:
-                    activity['authorInfo'] = await fediverse.aget(attributedTo)
+                    activity['_authorInfo'] = await fediverse.aget(attributedTo)
                 except:
                     pass
             
-            if 'authorInfo' in activity and type(activity['authorInfo']) is dict:
-                if 'preferredUsername' in activity['authorInfo'] and not activity['authorInfo'].get('user@host', None):
-                    activity['authorInfo']['user@host'] = ''
-                    author_url = urlparse(activity['authorInfo']['id'])
-                    activity['authorInfo']['user@host'] = f'{activity["authorInfo"]["preferredUsername"]}@{author_url.netloc}'
+            if '_authorInfo' in activity and type(activity['_authorInfo']) is dict:
+                if 'preferredUsername' in activity['_authorInfo'] and not activity['_authorInfo'].get('user@host', None):
+                    activity['_authorInfo']['user@host'] = ''
+                    author_url = urlparse(activity['_authorInfo']['id'])
+                    activity['_authorInfo']['user@host'] = f'{activity["_authorInfo"]["preferredUsername"]}@{author_url.netloc}'
                 subj_parts.append('by')
-                subj_parts.append(activity['authorInfo'].get('user@host', ''))
+                subj_parts.append(activity['_authorInfo'].get('user@host', ''))
         
         content = ap_object.get('content', '')
         
@@ -826,9 +832,9 @@ class Replies(View):
                 else:
                     data['items'][n]['is_local'] = False
                 
-                if 'authorInfo' not in apobject or not apobject['authorInfo']:
+                if '_authorInfo' not in apobject or not apobject['_authorInfo']:
                     if 'attributedTo' in apobject and is_url(apobject['attributedTo']):
-                        apobject['authorInfo'] = await fediverse.aget(apobject['attributedTo'])
+                        apobject['_authorInfo'] = await fediverse.aget(apobject['attributedTo'])
                 
                 if not data['summary'] and 'summary' in apobject and apobject['summary']:
                     data['summary'] = apobject['summary']
@@ -1100,16 +1106,16 @@ class Inbox(View):
         if is_post_json(request):
             data = json.loads(request.body)
             fediverse = fediverse_factory(request)
-            if 'requestMeta' not in data:
-                data['requestMeta'] = {}
+            if '_requestMeta' not in data:
+                data['_requestMeta'] = {}
             for k in request.META:
                 if k.startswith('HTTP_'):
-                    data['requestMeta'][k] = request.META[k]
+                    data['_requestMeta'][k] = request.META[k]
             
             # result = await fediverse.process_object(data)
             # data['_json'] = result
-            if 'actor' in data and 'authorInfo' not in data and 'authorInfo' not in data.get('object', {}):
-                data['authorInfo'] = await fediverse.aget(data['actor'])
+            if 'actor' in data and '_authorInfo' not in data and '_authorInfo' not in data.get('object', {}):
+                data['_authorInfo'] = await fediverse.aget(data['actor'])
             
             should_log_request = False
             saveResult = save_activity(request, data)
@@ -1593,12 +1599,12 @@ class Outbox(OrderedItemsView):
                     + f'?thread={urlquote(i["context"])}')
             
             actor = None
-            if 'authorInfo' not in i and 'attributedTo' in i:
-                i['authorInfo'] = {}
+            if '_authorInfo' not in i and 'attributedTo' in i:
+                i['_authorInfo'] = {}
                 if not actor:
                     actor = fediverse_factory(request)
                 try:
-                    i['authorInfo'] = await actor.aget(i.get('attributedTo'))
+                    i['_authorInfo'] = await actor.aget(i.get('attributedTo'))
                 except:
                     pass
             
@@ -1764,12 +1770,12 @@ class GlobalFeed(OrderedItemsView):
                     + f'?thread={urlquote(i["context"])}')
             
             actor = None
-            if 'authorInfo' not in i and 'attributedTo' in i:
-                i['authorInfo'] = {}
+            if '_authorInfo' not in i and 'attributedTo' in i:
+                i['_authorInfo'] = {}
                 if not actor:
                     actor = fediverse_factory(request)
                 try:
-                    i['authorInfo'] = await actor.aget(i.get('attributedTo'))
+                    i['_authorInfo'] = await actor.aget(i.get('attributedTo'))
                 except:
                     pass
             

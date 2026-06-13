@@ -1039,45 +1039,50 @@ class Replies(View):
                 if not uri:
                     ## found root
                     root = activity_dict
+        ## end while not done and uri
+        
+        if type(root) is dict:
+            root_obj = root.get('object')
+            if type(root_obj) is not dict:
+                stderrlog('ERROR', 'Bad root activity', root)
+                return False
             
-            if type(root) is dict:
-                root_obj = root.get('object')
-                if type(root_obj) is not dict:
-                    stderrlog('ERROR', 'Bad root activity', root)
-                    return False
+            context = (
+                root_obj.get('context')
+                or root_obj.get('conversation')
+                or root_obj.get('id')
+            )
+            
+            for activity_dict in activities:
+                activity_obj = activity_dict.get('object')
+                if type(activity_obj) is not dict:
+                    stderrlog('WARNING', 'Bad activity', activity_dict)
+                    continue
+                activity_obj['context'] = context
+                activity_obj['conversation'] = context
+                activity_dict['context'] = context
+                activity_dict['conversation'] = context
                 
-                context = (
-                    root_obj.get('context')
-                    or root_obj.get('conversation')
-                    or root_obj.get('id')
-                )
+                activity = await save_activity(request, activity_dict)
                 
-                for activity_dict in activities:
-                    activity_obj = activity_dict.get('object')
-                    if type(activity_obj) is not dict:
-                        stderrlog('WARNING', 'Bad activity', activity_dict)
-                        continue
-                    activity_obj['context'] = context
-                    activity_obj['conversation'] = context
-                    activity_dict['context'] = context
-                    activity_dict['conversation'] = context
-                    
-                    activity = await save_activity(request, activity_dict)
-                    
-                    if activity:
-                        stderrlog('DEBUG', 'Saved activity',
-                            activity.id, activity_dict.get('id'),
-                            'OBJ:', activity_obj.get('id'),
-                            'CONTEXT:', activity_obj.get('context')
-                        )
-                    else:
-                        stderrlog('ERROR', 'NOT Saved activity',
-                            activity, activity_dict.get('id'),
-                            'TYPE:', activity_dict.get('type'),
-                            'OBJ:', activity_obj.get('id'),
-                            'CONTEXT:', activity_obj.get('context'),
-                            'DICT:', activity_dict,
-                        )
+                if activity:
+                    stderrlog('DEBUG', 'Saved activity',
+                        activity.id, activity_dict.get('id'),
+                        'OBJ:', activity_obj.get('id'),
+                        'CONTEXT:', activity_obj.get('context')
+                    )
+                else:
+                    stderrlog('ERROR', 'NOT Saved activity',
+                        activity, activity_dict.get('id'),
+                        'TYPE:', activity_dict.get('type'),
+                        'OBJ:', activity_obj.get('id'),
+                        'CONTEXT:', activity_obj.get('context'),
+                        'DICT:', activity_dict,
+                    )
+        ## end if type(root) is dict
+        
+        if not root:
+            stderrlog('ERROR', 'Root activity not found for', uri)
         
         return {'root': root, 'activities': activities}
 

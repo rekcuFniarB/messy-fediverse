@@ -46,6 +46,14 @@ class Activity(models.Model):
         ('BLK',     'Block'),
     )
     
+    OBJ_TYPES = (
+        ('', ''),
+        ('NTE', 'Note'),
+        ('ART', 'Article'),
+        ('VDO', 'Video'),
+        ('UNK', 'Unknown'),
+    )
+    
     PROC_STATUSES = (
         (0,   'Unprocessed'),
         (10,   'Processing'),
@@ -55,12 +63,22 @@ class Activity(models.Model):
     ts = models.DateTimeField('Timestamp', auto_now_add=True)
     uri = models.URLField('Activity URI', unique=True, null=False)
     activity_type = models.CharField('Type', choices=TYPES, max_length=3, null=False, default='', blank=True)
+    object_type = models.CharField('Object Type', max_length=16, null=False, default='', blank=True)
     actor_uri = models.URLField('Actor URI', null=False, default='', blank=True)
     object_uri = models.URLField('Object URI', null=False, default='', blank=True, db_index=True)
     context = models.CharField('Context', null=False, default='', blank=True, max_length=255, db_index=True)
+    in_reply_to_uri = models.URLField('In reply to', null=False, default='', blank=True)
+    ## For old versions when activity jsons were stored in files
     self_json = models.FileField('Raw JSON', upload_to=get_upload_path, null=True, blank=True)
+    ## Activity json data
     activity_data = models.JSONField('Activity data', null=True, blank=True)
+    ## Is incoming or outgoing activity
     incoming = models.BooleanField('Is incoming', default=False, null=False)
+    ## Altered when new comment or other activity is added into thread.
+    thread_updated_at = models.DateTimeField('Thread updated at', auto_now_add=True)
+    updated_by_activity_uri = models.URLField('Updated by activity', null=False, default='',
+        max_length=255, blank=True)
+    ## Used for internal moderation
     disabled = models.BooleanField('Disabled', default=False, null=False)
     processing_status = models.SmallIntegerField(
         'Processing status', choices=PROC_STATUSES,

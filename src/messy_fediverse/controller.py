@@ -12,6 +12,7 @@ from django.templatetags.static import static as _staticurl
 from django.utils.html import strip_tags
 from django.forms.models import model_to_dict
 from django.db.models import Q, F, Exists, OuterRef, Subquery, Count, Max as DbMax, Min as DbMin
+from django.db.models.functions import Now as DbNow
 from .forms import InteractForm, InteractSearchForm, ReplyForm
 from .fediverse import FediverseActor
 from . import html
@@ -421,38 +422,42 @@ auth.csrf_exempt = True
 outbox.csrf_exempt = True
 main.csrf_exempt = True
 
-async def save_activity(request, activity):
+async def save_activity(request, activity_dict):
     '''
     Saving activity.
     request: django HttpRequest instance
-    activity: dict
+    activity_dict: dict
     '''
-    if type(activity) is not dict or not activity.get('id') or not activity.get('type'):
-        stderrlog('ERROR', 'Bad activity to save', activity)
+    if type(activity_dict) is not dict or not activity_dict.get('id') or not activity_dict.get('type'):
+        stderrlog('ERROR', 'Bad activity to save', activity_dict)
         return None
     
-    act = None
-    json_path = activity.get('_json', None)
-    apobject = activity.get('object', {})
-    activity_id = activity.get('id', None)
+    activity = None
+    apobject = activity_dict.get('object', {})
+    activity_uri = activity_dict.get('id', None)
     incoming = True
+    creating = False
+    activity_id = 0
+    created_id = 0
     
     if type(apobject) is dict:
-        object_id = apobject.get('id', '')
+        object_uri = apobject.get('id', '')
     else:
-        object_id = apobject
+        ## It's uri in some activity types
+        object_uri = str(apobject)
         apobject = {}
     
-    if not json_path:
-        json_path = apobject.get('_json', None)
-    
     actType = None
-    act_type = activity.get('type', apobject.get('type', ''))
+    act_type = activity_dict.get('type', apobject.get('type', ''))
     for def_type in Activity.TYPES:
         if act_type == def_type[1]:
             actType = def_type[0]
     
-    if act_type == 'Delete' and '/users/' in object_id:
+    if not actType or not activity_uri:
+        ## Wrong activity
+        return None
+    
+    if act_type == 'Delete' and '/users/' in object_uri:
         ## Ignoring users deletion, not implemented yet.
         ## We don't store 3rd party users anyway
         return None
@@ -460,106 +465,126 @@ async def save_activity(request, activity):
     context = (
         apobject.get('context')
         or apobject.get('conversation')
-        or activity.get('context')
-        or activity.get('conversation')
+        or activity_dict.get('context')
+        or activity_dict.get('conversation')
         or apobject.get('inReplyTo')
+        or activity_dict.get('inReplyTo')
         or apobject.get('id')
         or ''
     )
     
-    if actType and activity_id:
-        fediverse = fediverse_factory(request)
+    published = ''
+    if actType == 'UPD' and 'updated' in apobject:
+        published = apobject['updated']
+    
+    published = (
+        published
+        or apobject.get('published')
+        or activity_dict.get('published')
+        or ''
+    ).replace('Z', '+00:00')
+    
+    fediverse = fediverse_factory(request)
+    
+    ## Comparing activity actor uri to ours
+    if activity_dict.get('actor', None) == fediverse.id:
+        ## Is outgoing
+        incoming = False
+    
+    activity = await Activity.objects.filter(uri=activity_uri).afirst()
+    ## Creating new activity if not exists yet.
+    if not activity:
+        activity = Activity(
+            uri=activity_uri,
+            activity_type=actType,
+            actor_uri=activity_dict.get('actor', '') or '',
+            object_uri=object_uri,
+            context=context,
+            incoming=incoming
+        )
         
-        if activity.get('actor', None) == fediverse.id:
-            ## Is outgoing
-            incoming = False
+        if published:
+            activity.ts = published
         
-        act = await Activity.objects.filter(uri=activity_id).afirst()
-        ## FIXME maybe we should quit entire processing if activity already exists
-        if not act:
-            act = Activity(
-                uri=activity_id,
-                activity_type=actType,
-                actor_uri=activity.get('actor', '') or '',
-                object_uri=object_id,
-                context=context,
-                incoming=incoming
-            )
+        creating = True
+    
+    activity.object_type = apobject.get('type') or ''
+    activity.in_reply_to_uri = (
+        apobject.get('inReplyTo')
+        or activity_dict.get('inReplyTo')
+        or ''
+    )
+    ## If updating, context might not known during presave yet,
+    ## in some cases we update context in fetch_parents()
+    ## by finding root activity.
+    activity.context = context
+    activity.activity_data = activity_dict
+    
+    ## Mark as already processed
+    if '_response' in activity_dict:
+        activity.processing_status = 20
+    
+    try:
+        await sync_to_async(activity.save)()
+        activity_id = activity.pk
+        if creating:
+            created_id = activity_id
+    except BaseException as e:
+        trace_msg = traceback.format_exc()
+        
+        message=f'''<pre><code>{trace_msg}</code></pre><br>
+            <br>
+            <h2>Activity:</h2>
+            <pre><code>{json.dumps(activity_dict, indent=4)}</code></pre>
             
-            published = (
-                apobject.get('published', '')
-                or activity.get('published', '')
-            ).replace('Z', '+00:00')
+            <h2>Request debug info:</h2>
+            <pre><code>
+            GET: {request.META['QUERY_STRING']}
             
-            if published:
-                act.ts = published
+            POST: {request.POST.__str__()}
             
-            ## FIXME probably need to fix context: if there is 'inReplyTo' value
-            ##  then retrieve the object and set context to of context
-            ##  of top most object
-        
-        ## If updating, context might not known during presave.
-        act.context = context
-        act.activity_data = activity
-        
-        ## Mark as already processed
-        if '_response' in activity:
-            act.processing_status = 20
-        
-        ## Disabled FIXME remove in the future
-        ## we store JSON in DB now
-        if False:
-            ## If json already stored
-            if json_path and json_path.endswith('.json'):
-                if not path.isfile(json_path):
-                    ## Trying to normalize
-                    json_path = fediverse.normalize_file_path(json_path)
-                if path.isfile(json_path):
-                    act.self_json.name = path.relpath(json_path, settings.MEDIA_ROOT)
-            else:
-                ## FIXME django adds random chars before extension
-                ## if file already exists.
-                await sync_to_async(act.self_json.save)(
-                    f'{act.uniqid}.activity.json',
-                    content=ContentFile(json.dumps(activity)),
-                    save=False
-                )
-                await sync_to_async(act.self_json.close)()
-        
-        try:
-            await sync_to_async(act.save)()
-        except BaseException as e:
-            trace_msg = traceback.format_exc()
+            META: {request.META.__str__()}
             
-            message=f'''<pre><code>{trace_msg}</code></pre><br>
-                <br>
-                <h2>Activity:</h2>
-                <pre><code>{json.dumps(activity, indent=4)}</code></pre>
-                
-                <h2>Request debug info:</h2>
-                <pre><code>
-                GET: {request.META['QUERY_STRING']}
-                
-                POST: {request.POST.__str__()}
-                
-                META: {request.META.__str__()}
-                
-                BODY: {request.body.decode('utf-8', 'replace')}
-                </code></pre>
-            '''
-            
-            await sync_to_async(mail_admins)(
-                subject=f'ERROR: failed to save activity: {e}',
-                fail_silently=not settings.DEBUG,
-                message=strip_tags(message),
-                html_message=message
-            )
+            BODY: {request.body.decode('utf-8', 'replace')}
+            </code></pre>
+        '''
         
+        await sync_to_async(mail_admins)(
+            subject=f'ERROR: failed to save activity: {e}',
+            fail_silently=not settings.DEBUG,
+            message=strip_tags(message),
+            html_message=message
+        )
+    
+    if actType == 'UPD':
+        ## If activity updates other activity,
+        ## we mark old activities for this object_uri.
+        await Activity.objects.filter(
+            ~Q(pk=activity_id),
+            ~Q(uri=activity_uri),
+            Q(activity_type='UPD') | Q(activity_type='CRE'),
+            object_uri=object_uri,
+        ).aupdate(updated_by_activity_uri=activity_uri)
+    
+    ## If activity type is 'create' or 'update'
+    if actType in ('UPD', 'CRE') and published:
+        ## Updating thread last acitivity timestamp
+        await Activity.objects.filter(
+            context=context,
+            in_reply_to_uri='',
+            thread_updated_at__lt=published
+        ).aupdate(thread_updated_at=published)
+    
+    ## If just created new activity
+    ## FIXME move to worker, maybe just
+    ## compare processing_status to 10
+    if created_id:
+        ## If follow activity received
         if actType == 'FOL':
             ## If follow request
-            follower = await Follower.objects.filter(uri=act.actor_uri, object_uri=object_id).afirst()
+            follower = await Follower.objects.filter(uri=activity.actor_uri, object_uri=object_uri).afirst()
             ## Retrieving actor info from the net
-            actorInfo = await fediverse.aget(act.actor_uri)
+            actorInfo = await fediverse.aget(activity.actor_uri)
             ## If actor info is valid
             endpoint_url = None
             if type(actorInfo) is dict:
@@ -578,14 +603,14 @@ async def save_activity(request, activity):
                 
                 if not follower:
                     follower = Follower(
-                        uri=act.actor_uri,
-                        object_uri=object_id
+                        uri=activity.actor_uri,
+                        object_uri=object_uri
                     )
                 
                 follower.accepted = False
                 follower.disabled = False
                 follower.endpoint = endpoint
-                follower.activity = act
+                follower.activity = activity
                 
                 tasks = []
                 if not fediverse.manuallyApprovesFollowers:
@@ -595,8 +620,8 @@ async def save_activity(request, activity):
                 ## FIXME Django 4.2 will have asave()
                 tasks.append(sync_to_async(follower.save)())
                 await asyncio.gather(*tasks)
-                
         ## endif 'FOL' (follow request)
+        
         elif actType == 'UND':
             if (apobject.get('type', None) == 'Follow' and 'object' in apobject and
                 apobject['object'] and type(apobject['object']) is str and
@@ -605,7 +630,7 @@ async def save_activity(request, activity):
                 followers = Follower.objects.filter(uri=apobject['actor'], object_uri=apobject['object'])
                 await followers.aupdate(disabled=True, accepted=False)
     
-    return act
+    return activity
 
 
 async def send_accept_follow(request, follower):

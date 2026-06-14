@@ -67,7 +67,7 @@
             <a href="{{ item.attributedTo }}"
                 rel="author noopener"
                 {% if item.is_local %}target="_self"{% else %}target="_blank"{% endif %}
-            >@{{ item._authorInfo.preferredUsername }}</a>
+            >@{{ item.authorInfo.preferredUsername }}</a>
             
             {% if item.summary %}
                 <h4>Re: <a href="{{ item.id }}" target="_blank" rel="noopener">{{ item.summary }}</a></h4>

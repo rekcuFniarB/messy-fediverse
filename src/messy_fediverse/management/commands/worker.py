@@ -152,7 +152,7 @@ class Command(BaseCommand):
                     ## Until django 5.1 it requires sync_to_async,
                     ## so using aget instead.
                     activity = await Activity.objects.aget(pk=activity.pk)
-                    activity_dict = await activity.get_dict()
+                    activity_dict = activity.get_dict()
                     is_done = not self.isFederatingNeeded(activity_dict)
                     if not is_done:
                         self.stderr.write(
@@ -180,7 +180,7 @@ class Command(BaseCommand):
         activity: models.Activity instance.
         '''
         now = datetime.now()
-        activity_dict = await activity.get_dict()
+        activity_dict = activity.get_dict()
         activity_ts = datetime.fromisoformat(
             activity_dict.get('published', '1970-01-01').replace('Z', '')
         )

@@ -3,7 +3,6 @@ from django.conf import settings
 from os import path
 import json
 from datetime import datetime
-from asgiref.sync import sync_to_async
 from .fediverse import FediverseActor
 
 def get_upload_path(self, filename):
@@ -106,25 +105,12 @@ class Activity(models.Model):
                 or FediverseActor.uniqid()
             )
     
-    @sync_to_async
     def get_dict(self):
         '''
         Get activity dict.
-        FIXME: make it async
         '''
-        activity = self.activity_data
         
-        if not activity:
-            if self.self_json.name:
-                try:
-                    if self.self_json.closed:
-                        self.self_json.open()
-                    self.self_json.seek(0)
-                    activity = json.loads(self.self_json.read().decode('utf-8'))
-                    activity['_static'] = True
-                    self.self_json.close()
-                except:
-                    pass
+        activity = self.activity_data
         
         if not activity:
             activity = {
@@ -170,7 +156,7 @@ class Activity(models.Model):
         
         activity = None
         async for item in objects.aiterator():
-            activityDict = await item.get_dict()
+            activityDict = item.get_dict()
             if 'object' in activityDict and type(activityDict['object']) is dict:
                 # if activityDict['object'].get('type') == 'Note':
                 if activityDict['object'].get('id') == object_uri:

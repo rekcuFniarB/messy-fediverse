@@ -117,7 +117,7 @@ class WrapIntoStatus:
                 
                 activity = Activity.objects.filter(object_uri=title, activity_type='CRE', incoming=False).first()
                 if activity:
-                    activity = async_to_sync(activity.get_dict)()
+                    activity = activity.get_dict()
                     if 'object' in activity and type(activity['object']) is dict:
                         activity['object']['@context'] = activity.get('@context')
                         if 'replies' not in activity['object']:

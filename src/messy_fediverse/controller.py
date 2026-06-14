@@ -649,7 +649,7 @@ async def send_accept_follow(request, follower):
             raise TypeError('Bad actor info:', type(actorInfo), str(actorInfo))
     
     ## Getting activityPub object dict
-    apobject = await follower.activity.get_dict()
+    apobject = follower.activity.get_dict()
     apobject = apobject.get('object', None)
     if type(apobject) is not dict:
         apobject = {
@@ -765,7 +765,7 @@ class Replies(View):
                 continue
             
             if content:
-                toAppend = await item.get_dict()
+                toAppend = item.get_dict()
                 toAppend['pk'] = item.pk
                 toAppend['meta'] = item._meta
             else:
@@ -1023,7 +1023,7 @@ class Replies(View):
             activity_dict = None
             
             if activity:
-                activity_dict = await activity.get_dict()
+                activity_dict = activity.get_dict()
                 if type(activity_dict) is dict:
                     ap_object = activity_dict.get('object')
             else:
@@ -1165,7 +1165,7 @@ class Inbox(View):
         
         responseData['success'] = bool(saveResult)
         if saveResult:
-            responseData['activity'] = await saveResult.get_dict()
+            responseData['activity'] = saveResult.get_dict()
         
         return JsonResponse(responseData)
 
@@ -1216,7 +1216,7 @@ class OrderedItemsView(View):
     @classmethod
     async def object_to_dict(cls, obj, fields=[]):
         if hasattr(obj, 'get_dict'):
-            d = await obj.get_dict()
+            d = obj.get_dict()
         else:
             d = model_to_dict(obj)
         
@@ -1891,7 +1891,7 @@ class Status(View):
                     activity = json.load(f)
             else:
                 ## Got object from model
-                activity = await activityObject.get_dict()
+                activity = activityObject.get_dict()
         ## end if not activity
         
         if not activity or type(activity) is not dict:
@@ -1979,7 +1979,7 @@ class Status(View):
         if not activity:
             return JsonResponse({'alert': f'Activity for {object_uri} not found'}, status_code=404)
         
-        activity = await activity.get_dict()
+        activity = activity.get_dict()
         
         ## FIXME should also send requests to mentioned instances
         activity = await fediverse.new_delete_activity(activity)
@@ -2000,7 +2000,7 @@ class Status(View):
         if not activity:
             return JsonResponse({'alert': f'Activity for {object_uri} not found'}, status_code=404)
         
-        activity = await activity.get_dict()
+        activity = activity.get_dict()
         
         ## FIXME should also send requests to mentioned instances
         activity = await fediverse.new_undelete_activity(activity)
@@ -2163,7 +2163,7 @@ class Interact(View):
                 undo_activity_uri = request.POST.get('undo_activity')
                 if undo_activity_uri:
                     activity_to_undo = await Activity.objects.filter(uri=undo_activity_uri, actor_uri=fediverse.id).aget()
-                    activity_to_undo = await activity_to_undo.get_dict()
+                    activity_to_undo = activity_to_undo.get_dict()
                     if 'object' in activity_to_undo and type(activity_to_undo['object']):
                         ap_object = {}
                         for k in ('id', 'type', 'to', 'cc', 'object', 'actor'):

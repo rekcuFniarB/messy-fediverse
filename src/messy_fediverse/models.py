@@ -79,8 +79,8 @@ class Activity(models.Model):
         max_length=255, blank=True)
     ## Used for internal moderation
     disabled = models.BooleanField('Disabled', default=False, null=False)
-    processing_status = models.SmallIntegerField(
-        'Processing status', choices=PROC_STATUSES,
+    processing_status = models.IntegerField(
+        'Processing status',
         default=0, null=False, blank=True
     )
     _uniqid = None

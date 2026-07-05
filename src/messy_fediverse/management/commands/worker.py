@@ -9,6 +9,7 @@ import asyncio
 from asgiref.sync import sync_to_async
 from time import sleep
 from datetime import datetime
+import os
 # import tracemalloc
 
 class Command(BaseCommand):
@@ -16,6 +17,7 @@ class Command(BaseCommand):
     _done = False
     _request = None
     _actor = None
+    _pid = 0
     
     def add_arguments(self, parser):
         # Optional string argument
@@ -45,6 +47,7 @@ class Command(BaseCommand):
         
     
     def handle(self, *args, **options):
+        self._pid = os.getpid()
         url = None
         site = None
         ## For debugging forgotten to await.
@@ -78,18 +81,18 @@ class Command(BaseCommand):
             if options['uri']:
                 ## No infinite loop in this case
                 self._done = True
-                await Activity.objects.filter(processing_status=0, object_uri=options['uri']).aupdate(processing_status=10)
-                qs = Activity.objects.filter(processing_status=10, object_uri=options['uri'])
+                await Activity.objects.filter(processing_status=0, object_uri=options['uri']).aupdate(processing_status=self._pid)
+                qs = Activity.objects.filter(processing_status=self._pid, object_uri=options['uri'])
             else:
                 ## Marking these items for processing
-                ## FIXME for multiprocessing we need to
-                ## mark which process it was acquired by.
-                await Activity.objects.filter(processing_status=0).aupdate(processing_status=10)
-                qs = Activity.objects.filter(processing_status=10).order_by('-pk')[:100]
+                target_ids = Activity.objects.filter(processing_status=0).order_by('-pk').values_list('pk', flat=True)[:100]
+                target_ids = [pk async for pk in target_ids]
+                await Activity.objects.filter(processing_status=0, pk__in=target_ids).aupdate(processing_status=self._pid)
+                qs = Activity.objects.filter(processing_status=self._pid).order_by('pk')
             
             async for activity in qs:
                 self.stderr.write(
-                    self.style.SUCCESS(f"DEBUG: Processing: #{activity.id} {activity}")
+                    self.style.SUCCESS(f"DEBUG: Processing: #{activity.pk} {activity}")
                 )
                 
                 ## If is outgoing
@@ -101,7 +104,7 @@ class Command(BaseCommand):
                         )
                     except BaseException as e:
                         self.stderr.write(
-                            self.style.ERROR(f"Federating failed: #{activity.id} {activity}: {e}")
+                            self.style.ERROR(f"Federating failed: #{activity.pk} {activity}: {e}")
                         )
                         if self.isSqlLostException(e):
                             ## Got exception
@@ -133,7 +136,7 @@ class Command(BaseCommand):
                 
                 except BaseException as e:
                     self.stderr.write(
-                        self.style.ERROR(f"ERROR: Fetching root failed: #{activity.id} {activity}: {e}")
+                        self.style.ERROR(f"ERROR: Fetching root failed: #{activity.pk} {activity}: {e}")
                     )
                     if self.isSqlLostException(e):
                         ## Got exception
@@ -156,14 +159,14 @@ class Command(BaseCommand):
                     is_done = not self.isFederatingNeeded(activity_dict)
                     if not is_done:
                         self.stderr.write(
-                            self.style.WARNING(f"Will retry activity: #{activity.id} {activity}")
+                            self.style.WARNING(f"Will retry activity: #{activity.pk} {activity}")
                         )
-                    
+                
                 if is_done:
                     ## Processing done
-                    await Activity.objects.filter(pk=activity.pk).aupdate(processing_status=20)
+                    await Activity.objects.filter(pk=activity.pk).aupdate(processing_status=-self._pid)
                     self.stderr.write(
-                        self.style.SUCCESS(f"Done activity: #{activity.id} {activity}")
+                        self.style.SUCCESS(f"Done activity: #{activity.pk} {activity}")
                     )
                 
                 self.stderr.flush()
@@ -188,7 +191,7 @@ class Command(BaseCommand):
         if not self.isFederatingNeeded(activity_dict):
             ## Already federated or too old
             self.stderr.write(
-                self.style.SUCCESS(f"DEBUG: NOT federating: #{activity.id} {activity}")
+                self.style.SUCCESS(f"DEBUG: NOT federating: #{activity.pk} {activity}")
             )
             return None
         

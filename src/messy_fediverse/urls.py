@@ -11,6 +11,7 @@ urlpatterns = [
     path('webfinger/', controller.webfinger, name='webfinger'),
     path('outbox/', controller.Outbox.as_view(), name='outbox'),
     path('global/', controller.GlobalFeed.as_view(), name='global_feed'),
+    path('highlights/', controller.HighlightsFeed.as_view(), name='hightlights_feed'),
     path('inbox/', controller.Inbox.as_view(), name='inbox'),
     path('featured/', controller.featured, name='featured'),
     path('api/auth/', controller.auth, name='auth'),

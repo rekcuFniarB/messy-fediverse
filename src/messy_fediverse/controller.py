@@ -1403,6 +1403,60 @@ class OrderedItemsView(View):
         return render(request, self.template, data)
     
     async def postprocess(self, request, data):
+        '''Postprocess for tempaltes.'''
+        
+        if is_json_request(request):
+            return data
+        
+        proto = request_protocol(request)
+        data['user_is_staff'] = await request_user_is_staff(request)
+        data['user_is_authenticated'] = await request_user_is_authenticated(request)
+        
+        by_object_uri = {}
+        for n, item in enumerate(data.get('orderedItems', [])):
+            apobject = item.get('object')
+            if type(apobject) is dict:
+                by_object_uri[apobject.get('id')] = n
+                
+                if 'published' in apobject:
+                    apobject['published'] = datetime.fromisoformat(apobject['published'].rstrip('Z'))
+                
+                if 'replies' not in apobject:
+                    apobject['replies'] = reversepath('replies', urlparse(apobject['id']).path)
+        
+        ## For template
+        data['items'] = []
+        for x in data.get('orderedItems', ()):
+            i = {}
+            i.update(x)
+            apobject = i.get('object')
+            if type(apobject) is dict:
+                i.update(apobject)
+            
+            uri = i.get('id', '')
+            if uri.startswith(f'{proto}://{request.site.domain}'):
+                i['is_local'] = True
+            else:
+                i['is_local'] = False
+            
+            if i.get('context'):
+                i['thread_link'] = (reverse('outbox')
+                    + f'?thread={urlquote(i["context"])}')
+            
+            actor = None
+            if 'authorInfo' not in i and 'attributedTo' in i:
+                i['authorInfo'] = {}
+                if not actor:
+                    actor = fediverse_factory(request)
+                try:
+                    i['authorInfo'] = await actor.aget(i.get('attributedTo'))
+                except:
+                    pass
+            
+            data['items'].append(i)
+        
+        data['original_thread_url'] = None
+        
         return data
 
 class Followers(OrderedItemsView):
@@ -1809,6 +1863,54 @@ class GlobalFeed(OrderedItemsView):
         data['original_thread_url'] = None
         
         return data
+
+class HighlightsFeed(OrderedItemsView):
+    '''
+    Global posts liked by us.
+    '''
+    model = Activity
+    template = 'messy/fediverse/replies.html'
+    pageTitle = 'Hightlights'
+    pageClass = 'messy-fediverse-page-highlights'
+    
+    def set_filter(self, request, *args, **kwargs):
+        q_params = {}
+        
+        self.query_filter = (
+            Q(
+                Q(activity_type='CRE') | Q(activity_type='UPD'),
+                ## Exclude updated
+                Q(updated_by_activity_uri='') | Q(updated_by_activity_uri=None),
+                # object_type='Note',
+                disabled=False,
+                incoming=True,
+                **q_params
+            )
+            ## Ignore deleted, e.g.
+            ## there are no acvitities with
+            ## 'Delete' type.
+            & ~Exists(self.model.objects.filter(
+                activity_type='DEL',
+                object_uri=OuterRef('object_uri')
+            ))
+            ## Select objects liked or announced by us
+            & Exists(self.model.objects.filter(
+                Q(activity_type='LKE') | Q(activity_type='ANN'),
+                object_uri=OuterRef('object_uri'),
+                incoming=False,
+            ))
+        )
+        
+        return self.query_filter
+    
+    async def allowed(self):
+        if is_json_request(self.request):
+            return True
+        
+        if await request_user_is_authenticated(self.request):
+            return True
+        
+        return False
 
 def webfinger(request):
     '''

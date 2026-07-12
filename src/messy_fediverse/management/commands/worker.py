@@ -18,6 +18,7 @@ class Command(BaseCommand):
     _request = None
     _actor = None
     _pid = 0
+    _limit = 100
     
     def add_arguments(self, parser):
         # Optional string argument
@@ -75,22 +76,69 @@ class Command(BaseCommand):
         return asyncio.run(self.ahandle(**options))
     
     async def ahandle(self, *args, **options):
+        last_id = 0
+        cycles = 0
+        found = False
+        
         while not self._done:
             result = None
+            
+            if found:
+                cycles += 1
+                if cycles > self._limit * 10:
+                    cycles = 0
+                    ## Forcing last_id recheck
+                    last_id = 0
             
             if options['uri']:
                 ## No infinite loop in this case
                 self._done = True
-                await Activity.objects.filter(processing_status=0, object_uri=options['uri']).aupdate(processing_status=self._pid)
+                await (
+                    Activity.objects
+                        .filter(processing_status=0, object_uri=options['uri'])
+                        .aupdate(processing_status=self._pid)
+                )
                 qs = Activity.objects.filter(processing_status=self._pid, object_uri=options['uri'])
             else:
+                ## Last ID used for optimization
+                ## so that we don't scan the whole table
+                ## on every cycle.
+                if not last_id:
+                    last_id = (
+                        await Activity.objects
+                            .filter(processing_status=0)
+                            .order_by('pk')
+                            .values_list('pk', flat=True)
+                            .afirst() or 0
+                    )
+                    if not last_id:
+                        last_id = (
+                            await Activity.objects
+                            .order_by('-pk')
+                            .values_list('pk', flat=True)
+                            .afirst() or 0
+                        )
+                    last_id = max(1, last_id - self._limit * 5)
+                
                 ## Marking these items for processing
-                target_ids = Activity.objects.filter(processing_status=0).order_by('-pk').values_list('pk', flat=True)[:100]
+                target_ids = (
+                    Activity.objects
+                        .filter(processing_status=0, pk__gte=last_id)
+                        .order_by('-pk')
+                        .values_list('pk', flat=True)[:self._limit]
+                )
                 target_ids = [pk async for pk in target_ids]
-                await Activity.objects.filter(processing_status=0, pk__in=target_ids).aupdate(processing_status=self._pid)
+                await (
+                    Activity.objects
+                        .filter(processing_status=0, pk__in=target_ids)
+                        .aupdate(processing_status=self._pid)
+                )
                 qs = Activity.objects.filter(processing_status=self._pid).order_by('pk')
             
+            found = False
             async for activity in qs:
+                found = True
+                
                 self.stderr.write(
                     self.style.SUCCESS(f"DEBUG: Processing: #{activity.pk} {activity}")
                 )

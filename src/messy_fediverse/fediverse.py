@@ -448,24 +448,6 @@ class FediverseActor:
             'attachment': []
         }
         
-        file_types = {
-            'png':  'image/png',
-            'jpg':  'image/jpeg',
-            'jpeg': 'image/jpeg',
-            'svg':  'image/svg',
-            'gif':  'image/gif',
-            'webp': 'image/webp',
-            'webm': 'video/webm',
-            'mp4':  'video/mp4',
-            'm4a':  'audio/m4a',
-            'mp3':  'audio/mpeg',
-            'ogg':  'audio/ogg',
-            'opus': 'audio/ogg',
-            'mkv':  'video/mkv',
-            'html': 'text/html',
-            'txt':  'text/plain'
-        }
-        
         links = html.TagA.findall(content)
         
         for word in words:
@@ -486,12 +468,18 @@ class FediverseActor:
             url = urlparse(link.attr_href)
             basename = path.basename(url.path.strip('/'))
             if basename:
-                link_ext = basename.split('.')[-1].lower()
+                ## Link extension
+                link_ext = (
+                    ## attribute data-type="webp" can override
+                    getattr(link, 'attr_data-type', None)
+                    ## using link endings like .webp
+                    or basename.split('.')[-1].lower()
+                )
                 
                 if 'attachment' in link.attr_rel:
                     result['attachment'].append({
                         'type': 'Document',
-                        'mediaType': file_types.get(link_ext, 'application/octet-stream'),
+                        'mediaType': html.file_types.get(link_ext, html.file_types['']),
                         'url': link.attr_href
                     })
                 elif 'tag' in link.attr_rel:

@@ -1,5 +1,24 @@
 import re
 
+file_types = {
+    '':     'application/octet-stream',
+    'png':  'image/png',
+    'jpg':  'image/jpeg',
+    'jpeg': 'image/jpeg',
+    'svg':  'image/svg',
+    'gif':  'image/gif',
+    'webp': 'image/webp',
+    'webm': 'video/webm',
+    'mp4':  'video/mp4',
+    'm4a':  'audio/m4a',
+    'mp3':  'audio/mpeg',
+    'ogg':  'audio/ogg',
+    'opus': 'audio/ogg',
+    'mkv':  'video/mkv',
+    'html': 'text/html',
+    'txt':  'text/plain'
+}
+
 class Tag:
     _tagname = ''
     _relink = re.compile(f'(<{_tagname} ([^>]+?)>(.+?)</{_tagname}>)')

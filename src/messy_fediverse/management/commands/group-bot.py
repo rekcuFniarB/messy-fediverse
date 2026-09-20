@@ -352,15 +352,44 @@ class Command(BaseCommand):
     
     async def resolve_status_id(self, base_url, root_uri, headers):
         '''
-        Resolve the numeric id of a (possibly remote) status
-        via the Mastodon REST API.
+        Resolve the numeric id of a (possibly remote) status via Mastodon REST API.
+        Tries the lookup fast-path first, then a resolve=true search which
+        actively fetches unknown remote statuses.
         '''
-        url = f'{base_url}/api/v1/statuses/lookup?{urlencode({"url": root_uri})}'
+        data = await self.api_get(base_url, root_uri, headers,
+            '/api/v1/statuses/lookup', {'url': root_uri})
+        if type(data) is dict and data.get('id'):
+            return data['id']
+        
+        data = await self.api_get(base_url, root_uri, headers,
+            '/api/v2/search', {
+                'q': root_uri, 'resolve': 'true', 'type': 'statuses', 'limit': '1'
+            })
+        if type(data) is dict:
+            statuses = data.get('statuses') or []
+            if statuses and type(statuses[0]) is dict and statuses[0].get('id'):
+                return statuses[0]['id']
+        
+        return None
+    
+    async def api_get(self, base_url, root_uri, headers, path, params):
+        '''
+        Perform a GET request against the Mastodon API and return parsed JSON.
+        Logs failures (status code + short body) for later diagnosis.
+        '''
+        url = f'{base_url}{path}?{urlencode(params)}'
         
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, headers=headers) as response:
                     if response.status >= 400:
+                        text = await response.text()
+                        self.stderr.write(
+                            self.style.ERROR(
+                                f'Status lookup failed {response.status} '
+                                f'for {root_uri}: {text[:200]}'
+                            )
+                        )
                         return None
                     data = await response.json()
         except BaseException as e:
@@ -369,10 +398,7 @@ class Command(BaseCommand):
             )
             return None
         
-        if type(data) is dict and 'id' in data:
-            return data['id']
-        
-        return None
+        return data
     
     @staticmethod
     def get_attributed_to(ap_object):

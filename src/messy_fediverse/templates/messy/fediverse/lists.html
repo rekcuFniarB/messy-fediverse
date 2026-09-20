@@ -1,0 +1,50 @@
+{% extends 'messy/fediverse/base.html' %}
+
+{% firstof pageTitle meta_json.title "Lists" as summary %}
+
+{% block title %}{{ block.super }} {{ summary }}{% endblock title %}
+
+{% block pagetype %}<div class="messy-fediverse-page-lists"></div>{% endblock %}
+
+{% block main %}
+
+<script type="application/json"
+    class="section-metadata"
+    data-path="{{ request.path }}">
+{
+    "title": "{{ summary|escapejs }}",
+    "pageClass": "messy-fediverse-page-lists"
+}
+</script>
+
+<section class="messy-fediverse-lists">
+    <h3>Lists</h3>
+    
+    <form method="post" action="{% url 'messy-fediverse:lists' %}" class="messy-fediverse-new-list-form">
+        {% csrf_token %}
+        {{ form.as_p }}
+        <p><input type="submit" value="Create list"></p>
+    </form>
+    
+    {% if tags %}
+    <ul class="messy-fediverse-lists-list">
+        {% for tag in tags %}
+        <li>
+            <a href="{% url 'messy-fediverse:list' tag.pk %}">
+                {% firstof tag.title tag.name %}{% if tag.items_count %} ({{ tag.items_count }}){% endif %}
+            </a>
+            
+            <form method="post" action="{% url 'messy-fediverse:list-delete' tag.pk %}"
+                class="d-inline">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-danger btn-xs" title="Delete list">Delete</button>
+            </form>
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <p>No lists yet.</p>
+    {% endif %}
+</section>
+
+{% endblock %}

@@ -1,8 +1,18 @@
 from django import forms
 from django.conf import settings
+from .models import Tag
 
 def get_languages():
     return (('', ''), *settings.LANGUAGES)
+
+class TagForm(forms.ModelForm):
+    class Meta:
+        model = Tag
+        fields = ('name', 'title')
+
+class TaggedObjectForm(forms.Form):
+    object_uri = forms.URLField(max_length=255, required=True, label='Object URI')
+    object_type = forms.CharField(max_length=64, required=False, label='Object type')
 
 class InteractForm(forms.Form):
     summary = forms.CharField(max_length=255, required=False)

@@ -169,6 +169,66 @@ class Activity(models.Model):
         ts = self.ts.strftime('%Y-%m-%d %H:%M:%S')
         return f'{ts} {action} {self.uri}'
     
+class Tag(models.Model):
+    '''
+    User-created list used for bookmarking fediverse objects.
+    '''
+    name = models.CharField('Name', max_length=255, null=False, blank=False)
+    title = models.CharField('Title', max_length=255, null=False, blank=True, default='')
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name='User',
+        null=False,
+        related_name='messy_fediverse_tags',
+        on_delete=models.CASCADE
+    )
+    created_at = models.DateTimeField('Created at', auto_now_add=True)
+    
+    class Meta:
+        ordering = ('-pk',)
+        constraints = [
+            models.UniqueConstraint(fields=('user', 'name'), name='tag_unique_name_per_user')
+        ]
+    
+    def __str__(self):
+        return self.title or self.name
+
+class TaggedObject(models.Model):
+    '''
+    Reference to an activitypub object saved into a Tag (list).
+    The same activitypub object can be present in multiple tags.
+    '''
+    tag = models.ForeignKey(
+        Tag,
+        verbose_name='Tag',
+        null=False,
+        related_name='items',
+        on_delete=models.CASCADE
+    )
+    object_uri = models.URLField('Object URI', null=False, blank=False, db_index=True)
+    ## Who tagged the object. For now is the same as tag.user,
+    ## kept in case tags are shared by multiple users later.
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name='User',
+        null=False,
+        related_name='messy_fediverse_tagged_objects',
+        on_delete=models.CASCADE
+    )
+    ## Activitypub object type like 'Person', 'Note', 'Article', 'Video'.
+    ## Stored for convenient filtering by type.
+    object_type = models.CharField('Object Type', max_length=64, null=False, blank=True, default='')
+    created_at = models.DateTimeField('Created at', auto_now_add=True)
+    
+    class Meta:
+        ordering = ('-pk',)
+        constraints = [
+            models.UniqueConstraint(fields=('tag', 'object_uri'), name='tagged_object_unique_object_per_tag')
+        ]
+    
+    def __str__(self):
+        return self.object_uri
+
 class Follower(models.Model):
     uri = models.URLField('Actor URI', unique=True, null=False)
     ## Whom they follow

@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import FederatedEndpoint, Activity, Follower
+from .models import FederatedEndpoint, Activity, Follower, Tag, TaggedObject
 from .controller import fediverse_factory, save_activity, send_accept_follow, add_task
 from .middleware import stderrlog
 from asgiref.sync import sync_to_async, async_to_sync
@@ -42,6 +42,26 @@ class FollowerAdmin(admin.ModelAdmin):
         
         return super().save_model(request, obj, form, change)
     
+class TaggedObjectInline(admin.TabularInline):
+    model = TaggedObject
+    extra = 0
+    raw_id_fields = ['user']
+
+class TagAdmin(admin.ModelAdmin):
+    list_display = ('name', 'title', 'user', 'created_at')
+    list_filter = ('user',)
+    search_fields = ('name', 'title')
+    raw_id_fields = ['user']
+    inlines = [TaggedObjectInline]
+
+class TaggedObjectAdmin(admin.ModelAdmin):
+    list_display = ('object_uri', 'tag', 'user', 'object_type', 'created_at')
+    list_filter = ('tag', 'user', 'object_type')
+    search_fields = ('object_uri',)
+    raw_id_fields = ['tag', 'user']
+
 admin.site.register(FederatedEndpoint)
 admin.site.register(Activity)
 admin.site.register(Follower, FollowerAdmin)
+admin.site.register(Tag, TagAdmin)
+admin.site.register(TaggedObject, TaggedObjectAdmin)

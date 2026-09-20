@@ -1,0 +1,98 @@
+{% extends 'messy/fediverse/base.html' %}
+
+{% firstof tag.title tag.name "List" as summary %}
+
+{% block title %}{{ block.super }} {{ summary }}{% endblock title %}
+
+{% block pagetype %}<div class="messy-fediverse-page-list"></div>{% endblock %}
+
+{% block main %}
+
+<script type="application/json"
+    class="section-metadata"
+    data-path="{{ request.path }}">
+{
+    "title": "{{ summary|escapejs }}",
+    "pageClass": "messy-fediverse-page-list"
+}
+</script>
+
+<section class="messy-fediverse-list">
+    <header>
+        <h3>{% firstof tag.title tag.name %}</h3>
+        
+        <form method="post" action="{% url 'messy-fediverse:list' tag.pk %}" class="messy-fediverse-list-rename-form">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="rename">
+            {{ rename_form.as_p }}
+            <p><input type="submit" value="Rename"></p>
+        </form>
+        
+        <form method="post" action="{% url 'messy-fediverse:list-delete' tag.pk %}" class="d-inline">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-danger btn-xs" title="Delete list">Delete</button>
+        </form>
+    </header>
+    
+    <form method="post" action="{% url 'messy-fediverse:list' tag.pk %}" class="messy-fediverse-list-add-form">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="add">
+        {{ add_form.as_p }}
+        <p><input type="submit" value="Add to list"></p>
+    </form>
+    
+    <ul class="messy-fediverse-list-items">
+        {% for item in items %}
+        <li>
+            {% if item.ap_object %}
+                {% spaceless %}
+                {% if item.ap_object.type == 'Person' %}
+                <a href="{% firstof item.ap_object.url item.ap_object.id %}"
+                    {% if item.ap_object.is_local %}target="_self"{% else %}target="_blank"{% endif %}
+                    rel="noopener">@{{ item.ap_object.preferredUsername }}</a>
+                {% else %}
+                    {% if item.ap_object.summary %}
+                    <h4><a href="{% firstof item.ap_object.url item.ap_object.id %}"
+                        {% if item.ap_object.is_local %}target="_self"{% else %}target="_blank"{% endif %}
+                        rel="noopener">{{ item.ap_object.summary }}</a></h4>
+                    {% endif %}
+                    
+                    <div class="messy-fediverse-comment-body">
+                        <noscript data-sanitize-element
+                            data-forbid-attr="style,id,name">
+                            {% autoescape off %}
+                            {{ item.ap_object.content }}
+                            {% endautoescape %}
+                        </noscript>
+                    </div>
+                    
+                    <a href="{% firstof item.ap_object.url item.ap_object.id %}"
+                        {% if item.ap_object.is_local %}target="_self"{% else %}target="_blank"{% endif %}
+                        rel="noopener">{{ item.ap_object.id }}</a>
+                {% endif %}
+                {% endspaceless %}
+            {% else %}
+            <a href="{{ item.object_uri }}" target="_blank" rel="noopener">{{ item.object_uri }}</a>
+            {% endif %}
+            
+            {% if item.object_type %}
+            <span class="badge">{{ item.object_type }}</span>
+            {% endif %}
+            {% if item.error %}
+            <span class="text-muted">({% autoescape off %}{{ item.error }}{% endautoescape %})</span>
+            {% endif %}
+            
+            <form method="post" action="{% url 'messy-fediverse:list' tag.pk %}" class="d-inline">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="remove">
+                <input type="hidden" name="object_id" value="{{ item.pk }}">
+                <button type="submit" class="btn btn-danger btn-xs" title="Remove from list">Remove</button>
+            </form>
+        </li>
+        {% empty %}
+        <li>No items in this list yet.</li>
+        {% endfor %}
+    </ul>
+</section>
+
+{% endblock %}

@@ -13,7 +13,7 @@ from django.utils.html import strip_tags
 from django.forms.models import model_to_dict
 from django.db.models import Q, F, Exists, OuterRef, Subquery, Count, Max as DbMax, Min as DbMin
 from django.db.models.functions import Now as DbNow
-from .forms import InteractForm, InteractSearchForm, ReplyForm
+from .forms import InteractForm, InteractSearchForm, ReplyForm, TagForm, TaggedObjectForm
 from .fediverse import FediverseActor
 from . import html
 import requests
@@ -26,7 +26,7 @@ import sys
 from asgiref.sync import sync_to_async, async_to_sync
 import asyncio
 import aiohttp
-from .models import Activity, Follower, FederatedEndpoint
+from .models import Activity, Follower, FederatedEndpoint, Tag, TaggedObject
 # from .middleware import stderrlog
 # from functools import partial
 #from pprint import pprint
@@ -1911,6 +1911,261 @@ class HighlightsFeed(OrderedItemsView):
             return True
         
         return False
+
+class ListsIndex(View):
+    '''
+    Lists (tags) of the current user. Creates new lists.
+    '''
+    @sync_to_async
+    def render_page(self, request, data):
+        data['user_is_staff'] = request.user.is_staff
+        data['user_is_authenticated'] = request.user.is_authenticated
+        return render(request, 'messy/fediverse/lists.html', data)
+    
+    @staticmethod
+    @sync_to_async
+    def get_current_user(request):
+        return request.user
+    
+    @staticmethod
+    @sync_to_async
+    def get_tags(user):
+        tags_qs = Tag.objects.filter(user=user).annotate(items_count=Count('items'))
+        return [
+            {
+                'pk': tag.pk,
+                'name': tag.name,
+                'title': tag.title,
+                'items_count': tag.items_count,
+                'created_at': tag.created_at,
+            }
+            for tag in tags_qs
+        ]
+    
+    async def get(self, request):
+        if not await request_user_is_authenticated(request):
+            raise PermissionDenied
+        
+        user = await self.get_current_user(request)
+        return await self.render_page(request, {
+            'tags': await self.get_tags(user),
+            'form': TagForm(),
+        })
+    
+    async def post(self, request):
+        if not await request_user_is_authenticated(request):
+            raise PermissionDenied
+        
+        form = TagForm(request.POST)
+        if await sync_to_async(form.is_valid)():
+            tag = await sync_to_async(form.save)(commit=False)
+            tag.user = await self.get_current_user(request)
+            await sync_to_async(tag.save)()
+            return redirect(reverse('list', kwargs={'tag_id': tag.pk}))
+        
+        user = await self.get_current_user(request)
+        return await self.render_page(request, {
+            'tags': await self.get_tags(user),
+            'form': form,
+        })
+
+class TagView(View):
+    '''
+    Single list (tag) page: view, add/remove objects, rename.
+    '''
+    @staticmethod
+    @sync_to_async
+    def get_current_user(request):
+        return request.user
+    
+    @sync_to_async
+    def render_page(self, request, tag, data):
+        data['tag'] = {
+            'pk': tag.pk,
+            'name': tag.name,
+            'title': tag.title,
+            'user_is_staff': request.user.is_staff,
+            'user_is_authenticated': request.user.is_authenticated,
+        }
+        return render(request, 'messy/fediverse/list.html', data)
+    
+    async def get_tag(self, request, tag_id):
+        user = await self.get_current_user(request)
+        return await Tag.objects.filter(pk=tag_id, user=user).afirst()
+    
+    async def resolve_object(self, request, ref):
+        '''
+        Resolve saved object_uri to an activitypub object dict for display.
+        ref: TaggedObject instance
+        '''
+        result = {
+            'pk': ref.pk,
+            'object_uri': ref.object_uri,
+            'object_type': ref.object_type,
+            'created_at': ref.created_at,
+        }
+        proto = request_protocol(request)
+        fediverse = fediverse_factory(request)
+        ap_object = None
+        
+        ## Try local activities first
+        if ref.object_uri.startswith(f'{proto}://{request.site.domain}'):
+            activity = await Activity.get_note_activity(ref.object_uri, fediverse)
+            if activity:
+                ap_object = activity.get_dict().get('object')
+        
+        ## Otherwise fetch from the network
+        if type(ap_object) is not dict:
+            try:
+                ap_object = await fediverse.aget(ref.object_uri)
+            except BaseException as e:
+                result['error'] = str(e)
+        
+        if type(ap_object) is dict:
+            if ref.object_uri.startswith(f'{proto}://{request.site.domain}'):
+                ap_object['is_local'] = True
+            else:
+                ap_object['is_local'] = False
+            
+            if 'published' in ap_object and ap_object['published']:
+                try:
+                    ap_object['published'] = datetime.fromisoformat(ap_object['published'].rstrip('Z'))
+                except:
+                    pass
+            
+            result['ap_object'] = ap_object
+            
+            ## Saving object type if it was not specified manually
+            if not ref.object_type and ap_object.get('type'):
+                ref.object_type = ap_object['type']
+                await sync_to_async(ref.save)()
+        else:
+            result['error'] = result.get('error') or f'Unable to resolve object: {ap_object}'
+        
+        return result
+    
+    async def get_items(self, request, tag_id):
+        '''
+        Returns (tag, [resolved items]).
+        '''
+        tag = await self.get_tag(request, tag_id)
+        if not tag:
+            return None, []
+        
+        items = []
+        async for ref in TaggedObject.objects.filter(tag=tag):
+            items.append(await self.resolve_object(request, ref))
+        
+        return tag, items
+    
+    async def get(self, request, tag_id):
+        if not await request_user_is_authenticated(request):
+            raise PermissionDenied
+        
+        tag, items = await self.get_items(request, tag_id)
+        if not tag:
+            raise Http404('List not found.')
+        
+        return await self.render_page(request, tag, {
+            'items': items,
+            'add_form': TaggedObjectForm(),
+            'rename_form': TagForm(initial={'name': tag.name, 'title': tag.title}),
+        })
+    
+    async def post(self, request, tag_id):
+        if not await request_user_is_authenticated(request):
+            raise PermissionDenied
+        
+        tag = await self.get_tag(request, tag_id)
+        if not tag:
+            raise Http404('List not found.')
+        
+        action = request.POST.get('action', '')
+        redirect_url = reverse('list', kwargs={'tag_id': tag.pk})
+        
+        ## Removing object from the list
+        if action == 'remove':
+            object_id = request.POST.get('object_id', None)
+            if object_id:
+                user = await self.get_current_user(request)
+                await TaggedObject.objects.filter(pk=object_id, tag=tag, user=user).adelete()
+            return redirect(redirect_url)
+        
+        ## Adding object to the list
+        if action == 'add':
+            form = TaggedObjectForm(request.POST)
+            if await sync_to_async(form.is_valid)():
+                object_uri = form.cleaned_data['object_uri']
+                object_type = form.cleaned_data.get('object_type', '')
+                is_duplicate = await TaggedObject.objects.filter(tag=tag, object_uri=object_uri).aexists()
+                if not is_duplicate:
+                    user = await self.get_current_user(request)
+                    ref = TaggedObject(
+                        tag=tag,
+                        user=user,
+                        object_uri=object_uri,
+                        object_type=object_type or ''
+                    )
+                    await sync_to_async(ref.save)()
+                return redirect(redirect_url)
+            
+            ## Invalid form, rendering page with errors
+            _, items = await self.get_items(request, tag_id)
+            return await self.render_page(request, tag, {
+                'items': items,
+                'add_form': form,
+                'rename_form': TagForm(initial={'name': tag.name, 'title': tag.title}),
+            })
+        
+        ## Renaming the list
+        if action == 'rename':
+            form = TagForm(request.POST, instance=tag)
+            if await sync_to_async(form.is_valid)():
+                name = form.cleaned_data['name']
+                if name != tag.name:
+                    user = await self.get_current_user(request)
+                    exists = await (
+                        Tag.objects.filter(user=user, name=name)
+                        .exclude(pk=tag.pk)
+                        .aexists()
+                    )
+                    if exists:
+                        form.add_error('name', 'A list with this name already exists.')
+                    else:
+                        await sync_to_async(form.save)()
+                        return redirect(redirect_url)
+            else:
+                return redirect(redirect_url)
+            
+            _, items = await self.get_items(request, tag_id)
+            return await self.render_page(request, tag, {
+                'items': items,
+                'add_form': TaggedObjectForm(),
+                'rename_form': form,
+            })
+        
+        return redirect(redirect_url)
+
+class TagDelete(View):
+    '''
+    Deletes a list (tag) of the current user.
+    '''
+    @staticmethod
+    @sync_to_async
+    def get_current_user(request):
+        return request.user
+    
+    async def post(self, request, tag_id):
+        if not await request_user_is_authenticated(request):
+            raise PermissionDenied
+        
+        user = await self.get_current_user(request)
+        tag = await Tag.objects.filter(pk=tag_id, user=user).afirst()
+        if not tag:
+            raise Http404('List not found.')
+        
+        await sync_to_async(tag.delete)()
+        return redirect(reverse('lists'))
 
 def webfinger(request):
     '''

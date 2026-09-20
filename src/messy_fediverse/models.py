@@ -218,6 +218,9 @@ class TaggedObject(models.Model):
     ## Activitypub object type like 'Person', 'Note', 'Article', 'Video'.
     ## Stored for convenient filtering by type.
     object_type = models.CharField('Object Type', max_length=64, null=False, blank=True, default='')
+    ## Reusable storage for per-object tracking data of various tasks,
+    ## e.g. groups keep 'last_checked_uri' here.
+    meta = models.JSONField('Meta', null=False, blank=True, default=dict)
     created_at = models.DateTimeField('Created at', auto_now_add=True)
     
     class Meta:
@@ -228,6 +231,58 @@ class TaggedObject(models.Model):
     
     def __str__(self):
         return self.object_uri
+
+class Group(models.Model):
+    '''
+    An automated group which boosts root messages of threads
+    where its members (persons from a tag) comment.
+    For now groups act through an external Mastodon account.
+    '''
+    name = models.CharField('Name', max_length=255, null=False, blank=False, unique=True)
+    tag = models.ForeignKey(
+        Tag,
+        verbose_name='Tag',
+        null=False,
+        related_name='groups',
+        on_delete=models.CASCADE
+    )
+    enabled = models.BooleanField('Enabled', default=True, null=False)
+    mastodon_base_url = models.URLField('Mastodon base URL', null=False, blank=False)
+    mastodon_access_token = models.CharField('Mastodon access token', max_length=255, null=False, blank=False)
+    created_at = models.DateTimeField('Created at', auto_now_add=True)
+    updated_at = models.DateTimeField('Updated at', auto_now=True)
+    
+    class Meta:
+        ordering = ('-pk',)
+    
+    def __str__(self):
+        return self.name
+
+class GroupBoost(models.Model):
+    '''
+    Record of a root message boosted by a group,
+    used to avoid boosting the same root twice.
+    '''
+    group = models.ForeignKey(
+        Group,
+        verbose_name='Group',
+        null=False,
+        related_name='boosts',
+        on_delete=models.CASCADE
+    )
+    root_uri = models.URLField('Root URI', null=False, blank=False)
+    comment_uri = models.URLField('Comment URI', null=False, blank=True, default='')
+    reblog_id = models.CharField('Reblog ID', max_length=128, null=False, blank=True, default='')
+    created_at = models.DateTimeField('Created at', auto_now_add=True)
+    
+    class Meta:
+        ordering = ('-pk',)
+        constraints = [
+            models.UniqueConstraint(fields=('group', 'root_uri'), name='group_boost_unique_root')
+        ]
+    
+    def __str__(self):
+        return self.root_uri
 
 class Follower(models.Model):
     uri = models.URLField('Actor URI', unique=True, null=False)

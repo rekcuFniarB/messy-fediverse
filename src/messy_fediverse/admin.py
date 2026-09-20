@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import FederatedEndpoint, Activity, Follower, Tag, TaggedObject
+from .models import FederatedEndpoint, Activity, Follower, Tag, TaggedObject, Group, GroupBoost
 from .controller import fediverse_factory, save_activity, send_accept_follow, add_task
 from .middleware import stderrlog
 from asgiref.sync import sync_to_async, async_to_sync
@@ -60,8 +60,22 @@ class TaggedObjectAdmin(admin.ModelAdmin):
     search_fields = ('object_uri',)
     raw_id_fields = ['tag', 'user']
 
+class GroupAdmin(admin.ModelAdmin):
+    list_display = ('name', 'tag', 'enabled', 'mastodon_base_url', 'updated_at')
+    list_filter = ('enabled',)
+    search_fields = ('name', 'mastodon_base_url')
+    raw_id_fields = ['tag']
+
+class GroupBoostAdmin(admin.ModelAdmin):
+    list_display = ('root_uri', 'group', 'reblog_id', 'comment_uri', 'created_at')
+    list_filter = ('group',)
+    search_fields = ('root_uri', 'reblog_id', 'comment_uri')
+    raw_id_fields = ['group']
+
 admin.site.register(FederatedEndpoint)
 admin.site.register(Activity)
 admin.site.register(Follower, FollowerAdmin)
 admin.site.register(Tag, TagAdmin)
 admin.site.register(TaggedObject, TaggedObjectAdmin)
+admin.site.register(Group, GroupAdmin)
+admin.site.register(GroupBoost, GroupBoostAdmin)

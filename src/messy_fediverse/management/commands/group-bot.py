@@ -352,15 +352,10 @@ class Command(BaseCommand):
     
     async def resolve_status_id(self, base_url, root_uri, headers):
         '''
-        Resolve the numeric id of a (possibly remote) status via Mastodon REST API.
-        Tries the lookup fast-path first, then a resolve=true search which
-        actively fetches unknown remote statuses.
+        Resolve the numeric id of a (possibly remote) status via the
+        Mastodon REST API using a resolve=true search - this actively
+        fetches unknown remote statuses and reports them as statuses[0].
         '''
-        data = await self.api_get(base_url, root_uri, headers,
-            '/api/v1/statuses/lookup', {'url': root_uri})
-        if type(data) is dict and data.get('id'):
-            return data['id']
-        
         data = await self.api_get(base_url, root_uri, headers,
             '/api/v2/search', {
                 'q': root_uri, 'resolve': 'true', 'type': 'statuses', 'limit': '1'

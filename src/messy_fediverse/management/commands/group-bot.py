@@ -246,11 +246,12 @@ class Command(BaseCommand):
     
     async def find_root(self, comment_id):
         '''
-        Walk the inReplyTo chain up to the root message.
-        Returns the root ActivityPub object dict or None.
+        Walk the inReplyTo chain up to the root message. Returns the root
+        ActivityPub object dict, or None if the chain cannot be walked to a
+        verifiable root (a dict with a non-empty 'id' and no parent) - in the
+        latter case the boost is skipped, never boosting a mid-thread reply.
         '''
         current = comment_id
-        root = None
         seen = set()
         
         while current and current not in seen:
@@ -260,12 +261,25 @@ class Command(BaseCommand):
                 if 'inReplyTo' not in obj and type(obj.get('object')) is dict:
                     ## Activity wrapper, unwrapping to its object
                     obj = obj['object']
-            if type(obj) is not dict:
-                break
-            root = obj
-            current = obj.get('inReplyTo')
+            if type(obj) is not dict or not obj.get('id'):
+                return None
+            
+            parent = obj.get('inReplyTo')
+            if not parent:
+                return obj
+            
+            if type(parent) is str:
+                current = parent
+            elif type(parent) is dict:
+                ## Some implementations embed the parent object inline
+                if type(parent.get('id')) is str:
+                    current = parent['id']
+                else:
+                    return None
+            else:
+                return None
         
-        return root
+        return None
     
     async def handle_comment(self, group, member, comment_id):
         '''

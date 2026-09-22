@@ -129,10 +129,12 @@ class Command(BaseCommand):
     
     async def process_member(self, group, member, depth):
         '''
-        Walk member's outbox from newest to oldest, boost roots of checked comments.
-        Stops when a comment already checked in previous run is reached.
+        Walk member's outbox from newest to oldest, boost roots of new comments.
+        The stored last_checked_uri is the newest (most recent) comment processed
+        in the last run; this run stops as soon as that frontier comment is met
+        again, so already checked comments are never re-walked.
         '''
-        last_checked = member.meta.get('last_checked_uri', '')
+        frontier = member.meta.get('last_checked_uri', '')
         
         person = await self.fetch_ap(member.object_uri)
         if type(person) is not dict or not person.get('outbox'):
@@ -142,7 +144,14 @@ class Command(BaseCommand):
             return 0
         
         checked = 0
+        first_new = ''
+        seen = set()
         page = await self.get_outbox_page(person['outbox'])
+        
+        async def save_marker():
+            if first_new:
+                member.meta['last_checked_uri'] = first_new
+                await sync_to_async(member.save)(update_fields=['meta'])
         
         while page is not None and checked < depth:
             items = page.get('orderedItems') or []
@@ -165,14 +174,21 @@ class Command(BaseCommand):
                     ## Not a comment, skipping
                     continue
                 
-                if comment_id == last_checked:
-                    ## Reached a comment already checked in previous run
+                if comment_id == frontier:
+                    ## Reached the newest checked comment of the previous run,
+                    ## so everything newer was handled above and everything
+                    ## below is already checked - stop going deeper.
+                    await save_marker()
                     return checked
                 
-                await self.handle_comment(group, member, comment_id)
+                if comment_id in seen:
+                    ## Same comment listed more than once in the collection
+                    continue
                 
-                member.meta['last_checked_uri'] = comment_id
-                await sync_to_async(member.save)(update_fields=['meta'])
+                seen.add(comment_id)
+                await self.handle_comment(group, member, comment_id)
+                if not first_new:
+                    first_new = comment_id
                 checked += 1
             
             if checked >= depth:
@@ -183,6 +199,7 @@ class Command(BaseCommand):
                 break
             page = await self.get_outbox_page(nxt)
         
+        await save_marker()
         return checked
     
     async def fetch_ap(self, url):

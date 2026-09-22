@@ -7,6 +7,7 @@ from messy_fediverse.models import Group, GroupBoost
 import asyncio
 import aiohttp
 from asgiref.sync import sync_to_async
+from datetime import datetime
 from urllib.parse import urlencode
 
 ## Neutral User-Agent used by default for anonymous fetches.
@@ -108,6 +109,13 @@ class Command(BaseCommand):
             if options['sleep']:
                 await asyncio.sleep(options['sleep'])
             
+            self.stdout.write(
+                self.style.HTTP_INFO(
+                    f'Checking user {member.object_uri} at '
+                    f'{datetime.now():%Y-%m-%d %H:%M:%S}'
+                )
+            )
+            
             try:
                 checked = await self.process_member(group, member, depth)
             except BaseException as e:
@@ -125,6 +133,9 @@ class Command(BaseCommand):
         
         self.stdout.write(
             self.style.SUCCESS(f'Group "{group.name}": done, {total_checked} comments processed')
+        )
+        self.stdout.write(
+            self.style.SUCCESS(f'Finished at {datetime.now():%Y-%m-%d %H:%M:%S}')
         )
     
     async def process_member(self, group, member, depth):

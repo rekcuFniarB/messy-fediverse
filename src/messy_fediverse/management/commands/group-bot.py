@@ -111,8 +111,8 @@ class Command(BaseCommand):
             
             self.stdout.write(
                 self.style.HTTP_INFO(
-                    f'Checking user {member.object_uri} at '
-                    f'{datetime.now():%Y-%m-%d %H:%M:%S}'
+                    f'[{datetime.now():%Y-%m-%d %H:%M:%S}] '
+                    f'Checking user {member.object_uri}'
                 )
             )
             
@@ -135,7 +135,7 @@ class Command(BaseCommand):
             self.style.SUCCESS(f'Group "{group.name}": done, {total_checked} comments processed')
         )
         self.stdout.write(
-            self.style.SUCCESS(f'Finished at {datetime.now():%Y-%m-%d %H:%M:%S}')
+            self.style.SUCCESS(f'[{datetime.now():%Y-%m-%d %H:%M:%S}] Finished')
         )
     
     async def process_member(self, group, member, depth):

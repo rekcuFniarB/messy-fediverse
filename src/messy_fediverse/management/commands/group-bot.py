@@ -8,13 +8,21 @@ from messy_fediverse.models import Group, GroupBoost
 import asyncio
 import aiohttp
 import html
+import re
 from asgiref.sync import sync_to_async
 from datetime import datetime
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 ## Neutral User-Agent used by default for anonymous fetches.
 NEUTRAL_USER_AGENT = ('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
                       '(KHTML, like Gecko) Chrome/120.0 Safari/537.36')
+
+## Block level tags become line breaks in a quoted status body.
+BLOCK_TAG_RE = re.compile(
+    r'</?(?:p|div|br|li|ul|ol|blockquote|pre|h[1-6]|hr|tr|table|section'
+    r'|article|figure|figcaption)(?:\s[^>]*)?/?>',
+    re.IGNORECASE
+)
 
 class Command(BaseCommand):
     help = ('Group bot: watches persons in the group tag, finds roots of threads '
@@ -365,8 +373,8 @@ class Command(BaseCommand):
         '''
         Boost a status via the external Mastodon account REST API. When
         reblogging is not possible (author block, unknown status, ...), posts
-        a quote status with a blockquote and a link to the origin instead.
-        Returns (status id, quoted) or (None, False).
+        a plain text quote of the origin instead. Returns (status id, quoted)
+        or (None, False).
         '''
         base_url = group.mastodon_base_url.rstrip('/')
         headers = {
@@ -399,27 +407,20 @@ class Command(BaseCommand):
     
     async def post_quote(self, base_url, root_uri, root_object, headers):
         '''
-        Post a status quoting the root message: a blockquote with its plain
-        text and a link to the origin. Returns the new status id or None.
+        Post a plain text status quoting the root message: the origin
+        author's handle and quoted lines prefixed with "❯ ", a blank
+        line and a link to the origin. Returns the new status id or None.
         '''
         limit = await self.get_status_limit(base_url, headers)
         link = root_object.get('url')
         if type(link) is not str or not link:
             link = root_uri
         
-        link_markup = f'<a href="{link}">{link}</a>'
-        text = self.quote_text(root_object)
-        prefix = '<blockquote>'
-        suffix = '</blockquote>\n'
-        available = limit - len(prefix) - len(suffix) - len(link_markup)
-        
-        if text and available > 3:
-            if len(text) > available:
-                text = self.cut_escaped(text, available - 3) + '...'
-            status = f'{prefix}{text}{suffix}{link_markup}'
-        else:
-            ## No text or no room for it - post the origin link alone
-            status = link_markup
+        handle = await self.get_handle(root_object)
+        attribution = f'❯ {handle}:' if handle else None
+        content = [f'❯ {line}' for line in self.quote_text(root_object)]
+        body = self.fit_quote(attribution, content, link, limit)
+        status = f'{body}\n\n{link}' if body else link
         
         if len(status) > limit:
             self.stderr.write(
@@ -440,29 +441,75 @@ class Command(BaseCommand):
     @staticmethod
     def quote_text(ap_object):
         '''
-        Plain text of a status for quoting: strips HTML tags, unescapes
-        entities and escapes the result back for HTML embedding.
+        Plain text of a status for quoting as a list of lines: block
+        level tags become line breaks, other tags become spaces,
+        entities are unescaped, empty lines are dropped.
         '''
         raw = ap_object.get('content')
         if type(raw) is not str or not raw.strip():
             raw = ap_object.get('name') or ap_object.get('summary') or ''
         if not raw:
-            return ''
+            return []
         
-        text = html.unescape(strip_tags(raw.replace('<', ' <')))
-        text = ' '.join(text.split())
-        return html.escape(text, quote=False)
+        text = BLOCK_TAG_RE.sub('\n', raw)
+        text = html.unescape(strip_tags(text.replace('<', ' <')))
+        return [
+            ' '.join(line.split())
+            for line in text.splitlines()
+            if line.strip()
+        ]
     
     @staticmethod
-    def cut_escaped(text, limit):
+    def fit_quote(attribution, content, link, limit):
         '''
-        Cut an HTML escaped string without breaking an entity in half.
+        Fit the quote lines (already prefixed) into the text budget -
+        limit minus the link and a blank line separator. The
+        attribution line is kept whole or dropped, content lines are
+        cut with "..." on overflow. Returns '' when nothing fits -
+        the caller posts the link alone.
         '''
-        cut = text[:limit]
-        amp = cut.rfind('&')
-        if amp != -1 and amp > cut.rfind(';'):
-            cut = cut[:amp]
-        return cut
+        available = limit - len(link) - 2
+        result = []
+        if attribution and len(attribution) <= available:
+            result.append(attribution)
+        for line in content:
+            room = available - len('\n'.join(result)) - (1 if result else 0)
+            if len(line) <= room:
+                result.append(line)
+                continue
+            if room <= 5:
+                break
+            result.append(line[:room - 3] + '...')
+            break
+        return '\n'.join(result)
+    
+    async def get_handle(self, root_object):
+        '''
+        Fediverse handle of the root author: fetches the actor object
+        and combines its preferredUsername with the actor uri host.
+        Returns None when the handle can not be determined.
+        '''
+        attributed = self.get_attributed_to(root_object)
+        if not attributed:
+            return None
+        
+        actor = await self.fetch_ap(attributed)
+        if type(actor) is not dict:
+            return None
+        
+        username = actor.get('preferredUsername')
+        if type(username) is not str or not username.strip():
+            return None
+        
+        host = urlsplit(attributed).netloc
+        if host.endswith(':443'):
+            host = host[:-4]
+        elif host.endswith(':80'):
+            host = host[:-3]
+        if not host:
+            return None
+        
+        return f'@{username.strip()}@{host}'
     
     async def get_status_limit(self, base_url, headers):
         '''

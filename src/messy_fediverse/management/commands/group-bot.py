@@ -2,10 +2,12 @@ from django.core.management.base import BaseCommand, CommandError
 from django.conf import settings
 from django.contrib.sites.models import Site
 from django.test import RequestFactory
+from django.utils.html import strip_tags
 from messy_fediverse.controller import fediverse_factory
 from messy_fediverse.models import Group, GroupBoost
 import asyncio
 import aiohttp
+import html
 from asgiref.sync import sync_to_async
 from datetime import datetime
 from urllib.parse import urlencode
@@ -72,6 +74,7 @@ class Command(BaseCommand):
         self._signed = options['signed']
         self._user_agent = options['user_agent']
         self._actor = None
+        self._status_limit = None
         
         if self._signed:
             site = None
@@ -339,7 +342,7 @@ class Command(BaseCommand):
             )
             return
         
-        reblog_id = await self.reblog(group, root_uri)
+        reblog_id, quoted = await self.reblog(group, root_uri, root_object)
         if not reblog_id:
             return
         
@@ -349,14 +352,21 @@ class Command(BaseCommand):
             comment_uri=comment_id,
             reblog_id=reblog_id
         )
-        self.stdout.write(
-            self.style.SUCCESS(f'Boosted {root_uri} (reblog {reblog_id})')
-        )
+        if quoted:
+            self.stdout.write(
+                self.style.SUCCESS(f'Quoted {root_uri} (status {reblog_id})')
+            )
+        else:
+            self.stdout.write(
+                self.style.SUCCESS(f'Boosted {root_uri} (reblog {reblog_id})')
+            )
     
-    async def reblog(self, group, root_uri):
+    async def reblog(self, group, root_uri, root_object):
         '''
-        Boost (reblog) a status via the external Mastodon account REST API.
-        Returns the reblog status id or None.
+        Boost a status via the external Mastodon account REST API. When
+        reblogging is not possible (author block, unknown status, ...), posts
+        a quote status with a blockquote and a link to the origin instead.
+        Returns (status id, quoted) or (None, False).
         '''
         base_url = group.mastodon_base_url.rstrip('/')
         headers = {
@@ -365,77 +375,181 @@ class Command(BaseCommand):
             'Content-Type': 'application/json'
         }
         
-        status_id = await self.resolve_status_id(base_url, root_uri, headers)
-        if not status_id:
+        status_id, error = await self.resolve_status_id(base_url, root_uri, headers)
+        if status_id:
+            data, error = await self.mastodon_request('POST',
+                f'{base_url}/api/v1/statuses/{status_id}/reblog', headers)
+            if error is None:
+                if type(data) is dict and data.get('id'):
+                    return data['id'], False
+                error = 'permanent'
+        
+        if error == 'transient-exhausted':
+            ## The API is unreachable, a quote request would fail as well
             self.stderr.write(
-                self.style.ERROR(f'No status id for {root_uri}, cannot reblog')
+                self.style.ERROR(f'Reblog failed for {root_uri}, giving up')
+            )
+            return None, False
+        
+        quote_id = await self.post_quote(base_url, root_uri, root_object, headers)
+        if quote_id:
+            return quote_id, True
+        
+        return None, False
+    
+    async def post_quote(self, base_url, root_uri, root_object, headers):
+        '''
+        Post a status quoting the root message: a blockquote with its plain
+        text and a link to the origin. Returns the new status id or None.
+        '''
+        limit = await self.get_status_limit(base_url, headers)
+        link = root_object.get('url')
+        if type(link) is not str or not link:
+            link = root_uri
+        
+        link_markup = f'<a href="{link}">{link}</a>'
+        text = self.quote_text(root_object)
+        prefix = '<blockquote>'
+        suffix = '</blockquote>\n'
+        available = limit - len(prefix) - len(suffix) - len(link_markup)
+        
+        if text and available > 3:
+            if len(text) > available:
+                text = self.cut_escaped(text, available - 3) + '...'
+            status = f'{prefix}{text}{suffix}{link_markup}'
+        else:
+            ## No text or no room for it - post the origin link alone
+            status = link_markup
+        
+        if len(status) > limit:
+            self.stderr.write(
+                self.style.ERROR(
+                    f'Quote does not fit into {limit} chars for {root_uri}'
+                )
             )
             return None
         
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                f'{base_url}/api/v1/statuses/{status_id}/reblog',
-                headers=headers
-            ) as response:
-                if response.status >= 400:
-                    text = await response.text()
-                    self.stderr.write(
-                        self.style.ERROR(
-                            f'Reblog failed {response.status}: {text[:400]}'
-                        )
-                    )
-                    return None
-                data = await response.json()
+        data, error = await self.mastodon_request('POST',
+            f'{base_url}/api/v1/statuses', headers,
+            {'status': status, 'visibility': 'public'})
+        if error or type(data) is not dict:
+            return None
         
-        if type(data) is dict:
-            return data.get('id')
+        return data.get('id')
+    
+    @staticmethod
+    def quote_text(ap_object):
+        '''
+        Plain text of a status for quoting: strips HTML tags, unescapes
+        entities and escapes the result back for HTML embedding.
+        '''
+        raw = ap_object.get('content')
+        if type(raw) is not str or not raw.strip():
+            raw = ap_object.get('name') or ap_object.get('summary') or ''
+        if not raw:
+            return ''
         
-        return None
+        text = html.unescape(strip_tags(raw.replace('<', ' <')))
+        text = ' '.join(text.split())
+        return html.escape(text, quote=False)
+    
+    @staticmethod
+    def cut_escaped(text, limit):
+        '''
+        Cut an HTML escaped string without breaking an entity in half.
+        '''
+        cut = text[:limit]
+        amp = cut.rfind('&')
+        if amp != -1 and amp > cut.rfind(';'):
+            cut = cut[:amp]
+        return cut
+    
+    async def get_status_limit(self, base_url, headers):
+        '''
+        Maximum note length configured on the Mastodon instance.
+        Cached for the command run, defaults to 500.
+        '''
+        if self._status_limit:
+            return self._status_limit
+        
+        data, error = await self.mastodon_request('GET',
+            f'{base_url}/api/v2/instance', headers)
+        limit = 500
+        if error is None and type(data) is dict:
+            try:
+                limit = int(data['configuration']['statuses']['max_characters'])
+            except (KeyError, TypeError, ValueError):
+                limit = 500
+        
+        self._status_limit = limit
+        return limit
     
     async def resolve_status_id(self, base_url, root_uri, headers):
         '''
         Resolve the numeric id of a (possibly remote) status via the
         Mastodon REST API using a resolve=true search - this actively
         fetches unknown remote statuses and reports them as statuses[0].
+        Returns (status id, error) where error mirrors mastodon_request
+        ('permanent' also for an empty search result).
         '''
-        data = await self.api_get(base_url, root_uri, headers,
-            '/api/v2/search', {
-                'q': root_uri, 'resolve': 'true', 'type': 'statuses', 'limit': '1'
-            })
-        if type(data) is dict:
-            statuses = data.get('statuses') or []
-            if statuses and type(statuses[0]) is dict and statuses[0].get('id'):
-                return statuses[0]['id']
+        params = {
+            'q': root_uri, 'resolve': 'true', 'type': 'statuses', 'limit': '1'
+        }
+        data, error = await self.mastodon_request('GET',
+            f'{base_url}/api/v2/search?{urlencode(params)}',
+            headers)
+        if error:
+            return None, error
         
-        return None
+        statuses = data.get('statuses') if type(data) is dict else None
+        if statuses and type(statuses[0]) is dict and statuses[0].get('id'):
+            return statuses[0]['id'], None
+        
+        self.stderr.write(
+            self.style.ERROR(f'Status not resolvable for {root_uri}')
+        )
+        return None, 'permanent'
     
-    async def api_get(self, base_url, root_uri, headers, path, params):
+    async def mastodon_request(self, method, url, headers, payload=None, retries=3):
         '''
-        Perform a GET request against the Mastodon API and return parsed JSON.
-        Logs failures (status code + short body) for later diagnosis.
+        Perform a Mastodon API request with retries on transient failures
+        (network errors, HTTP 429, HTTP 5xx). Returns (data, error) where
+        error is None on success, 'permanent' on a non-retriable HTTP 4xx
+        and 'transient-exhausted' when retries are used up.
         '''
-        url = f'{base_url}{path}?{urlencode(params)}'
-        
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers) as response:
-                    if response.status >= 400:
-                        text = await response.text()
-                        self.stderr.write(
-                            self.style.ERROR(
-                                f'Status lookup failed {response.status} '
-                                f'for {root_uri}: {text[:200]}'
+        for attempt in range(retries):
+            if attempt:
+                await asyncio.sleep(2 * attempt)
+            
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.request(
+                        method, url, headers=headers, json=payload
+                    ) as response:
+                        if response.status >= 400:
+                            text = await response.text()
+                            self.stderr.write(
+                                self.style.ERROR(
+                                    f'Mastodon API {method} {response.status} '
+                                    f'for {url}: {text[:400]}'
+                                )
                             )
-                        )
-                        return None
-                    data = await response.json()
-        except BaseException as e:
-            self.stderr.write(
-                self.style.ERROR(f'Status lookup failed for {root_uri}: {e}')
-            )
-            return None
+                            if response.status != 429 and response.status < 500:
+                                return None, 'permanent'
+                            continue
+                        data = await response.json()
+            except BaseException as e:
+                self.stderr.write(
+                    self.style.WARNING(
+                        f'Mastodon API {method} failed for {url} '
+                        f'(attempt {attempt + 1}/{retries}): {e}'
+                    )
+                )
+                continue
+            
+            return data, None
         
-        return data
+        return None, 'transient-exhausted'
     
     @staticmethod
     def get_attributed_to(ap_object):

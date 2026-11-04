@@ -27,9 +27,9 @@ from asgiref.sync import sync_to_async, async_to_sync
 import asyncio
 import aiohttp
 from .models import Activity, Follower, FederatedEndpoint, Tag, TaggedObject
-# from .middleware import stderrlog
+from .middleware import stderrlog, is_same_site_referer, request_user_is_staff, request_user_is_authenticated
 # from functools import partial
-#from pprint import pprint
+# from pprint import pprint
 import traceback
 
 class ActivityResponse(JsonResponse):
@@ -64,17 +64,6 @@ class ActivityResponse(JsonResponse):
 sentinel = object()
 __cache__ = {}
 
-@sync_to_async
-def request_user_is_staff(request):
-    ## We can't just use request.user.is_staff from async views
-    ## due to lazy executions, so we get errors.
-    return request.user.is_staff
-
-@sync_to_async
-def request_user_is_authenticated(request):
-    ## We can't just use request.user.is_staff from async views
-    ## due to lazy executions, so we get errors.
-    return request.user.is_authenticated
 
 def add_task(request, task):
     '''
@@ -831,8 +820,7 @@ class Replies(View):
             }, request)
         else:
             if not await request_user_is_staff(request):
-                referer = request.META.get('HTTP_REFERER')
-                if not referer or urlparse(referer).netloc != request.site.domain:
+                if not is_same_site_referer(request):
                     ## Redirecting to post view
                     return redirect(f'/{rpath}/')
                     
@@ -1599,8 +1587,7 @@ class Outbox(OrderedItemsView):
         if is_json_request(self.request):
             return True
         
-        referer = self.request.META.get('HTTP_REFERER')
-        if not referer or urlparse(referer).netloc != self.request.site.domain:
+        if not is_same_site_referer(self.request):
             return False
         
         return True
@@ -2295,8 +2282,7 @@ class Status(View):
             if delActivity or data['deleted']:
                 raise Http404(f'Status {rpath} was deleted.')
             
-            referer = request.META.get('HTTP_REFERER')
-            if not referer or urlparse(referer).netloc != request.site.domain:
+            if not is_same_site_referer(request):
                 if 'url' in apobject and apobject['url'] and apobject['url'] != apobject['id']:
                     return redirect(apobject['url'])
                 elif 'inReplyTo' in apobject and apobject['inReplyTo']:

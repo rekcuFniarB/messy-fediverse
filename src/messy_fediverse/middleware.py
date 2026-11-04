@@ -1,19 +1,17 @@
 import syslog
 from django.http import JsonResponse
 from django.core.exceptions import PermissionDenied #, BadRequest
-from .controller import fediverse_factory, root_json, request_user_is_staff, ActivityResponse
-from .models import Activity
 from django.conf import settings
 from django.urls import resolve, reverse
 from hashlib import sha256
 from base64 import b64encode, b64decode
-from .urls import app_name
 import re
 import sys
 from datetime import datetime
+from urllib.parse import urlparse
 from django.utils.decorators import sync_and_async_middleware
 import aiohttp
-from asgiref.sync import async_to_sync
+from asgiref.sync import async_to_sync, sync_to_async
 from asgiref.sync import iscoroutinefunction, markcoroutinefunction
 from functools import wraps
 
@@ -26,6 +24,32 @@ def stderrlog(*msg):
     ):
         print(*msg, file=sys.stderr, flush=True)
 
+def is_same_site_referer(request):
+    '''
+    Checks if request's referer domain is the same as requested domain.
+    request: Django HTTP Request objec.
+    '''
+    referer = request.META.get('HTTP_REFERER')
+    if not referer:
+        return False
+
+    referer_netloc = urlparse(referer).netloc
+    ## Requested hostnsme
+    current_host = request.get_host()
+
+    return referer_netloc == current_host
+
+@sync_to_async
+def request_user_is_staff(request):
+    ## We can't just use request.user.is_staff from async views
+    ## due to lazy executions, so we get errors.
+    return request.user.is_staff
+
+@sync_to_async
+def request_user_is_authenticated(request):
+    ## We can't just use request.user.is_staff from async views
+    ## due to lazy executions, so we get errors.
+    return request.user.is_authenticated
 
 class StdErrLogAllRequests:
     '''
@@ -54,6 +78,7 @@ class SysLog:
         self.get_response = get_response
     
     def __call__(self, request):
+        from .urls import app_name
         
         ## Before view code
         response = self.get_response(request)
@@ -80,6 +105,10 @@ class WrapIntoStatus:
         self.timeregex = re.compile(b'<time [^>]*datetime="(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}\+?[^"\s]*)"')
         self.titleregex = re.compile(b'<title>([^<>]+?)</title>')
     def __call__(self, request):
+        from .models import Activity
+        from .controller import fediverse_factory, root_json, ActivityResponse
+        from .urls import app_name
+        
         ## Before view
         response = self.get_response(request)
         ## After view
@@ -190,6 +219,9 @@ class VerifySignature:
         return await self.get_response(request)
     
     async def process_view(self, request, view_func, view_args, view_kwargs):
+        from .controller import fediverse_factory
+        from .urls import app_name
+        
         ## Whe check only views which have csrf_exempt because only those views
         ## are for requests from federated instances.
         if (

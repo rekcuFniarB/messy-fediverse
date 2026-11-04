@@ -18,7 +18,7 @@ class MessyFediverseConfig(AppConfig):
         selfModule.FediverseActor = FediverseActor
         selfModule.stderrlog = stderrlog
         selfModule.controller = controller
-        controller.stderrlog = stderrlog
+        # controller.stderrlog = stderrlog
         
         request_finished.connect(self.postprocess_tasks, dispatch_uid='messy_fediverse_postprocess_tasks')
     

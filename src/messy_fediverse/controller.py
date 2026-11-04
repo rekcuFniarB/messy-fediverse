@@ -186,12 +186,6 @@ def normalize_url(url):
         url = '&'.join(qs_parts)
     return url
 
-def request_protocol(request):
-    proto = 'http'
-    if request.is_secure():
-        proto = 'https'
-    return proto
-
 async def log_request(request, data=None, force=False):
     if force or (settings.MESSY_FEDIVERSE.get('LOG_REQUESTS_TO_MAIL', False) and request.method == 'POST'):
         return await email_notice(request, data)
@@ -274,15 +268,10 @@ async def email_notice(request, activity):
 
 def fediverse_factory(request):
     if 'fediverse' not in __cache__:
-        proto = request_protocol(request)
-        #proto = 'https' ## FIXME probably they don't accept non https
-        #if request.is_secure():
-        #    proto = 'https'
-        
         headers = {
-            'Referer': f'{proto}://{request.site.domain}/',
+            'Referer': f'{request.scheme}://{request.site.domain}/',
             'Content-Type': 'application/activity+json',
-            'User-Agent': f'Messy Fediverse (+{proto}://{request.site.domain})',
+            'User-Agent': f'Messy Fediverse (+{request.scheme}://{request.site.domain})',
             # 'Accept': 'application/activity+json, application/ld+json; profile="https://www.w3.org/ns/activitystreams", application/json'
             ## Lemmy responds with html for header above
             'Accept': 'application/activity+json'
@@ -295,7 +284,7 @@ def fediverse_factory(request):
                 staticurl(request, 'messy/fediverse/litepub.json'),
                 #'https://litepub.social/litepub/litepub-v0.1.jsonld',
                 # 'https://dweb.link/ipfs/QmUt2rFamEsBxSkUd7DwE7SXr5BVxTQviGMH6Hwj9bKzTE/litepub-0.1.jsonld',
-                #f"{proto}://{request.site.domain}/schemas/litepub-0.1.jsonld",
+                #f"{request.scheme}://{request.site.domain}/schemas/litepub-0.1.jsonld",
                 {
                     "@language": "und"
                 }
@@ -308,41 +297,41 @@ def fediverse_factory(request):
             },
             "discoverable": False,
             "endpoints": {
-                #"oauthAuthorizationEndpoint": f"{proto}://{request.site.domain}{reverse('auth')}",
-                #"oauthRegistrationEndpoint": f"{proto}://{request.site.domain}/social/api/apps/",
-                "oauthTokenEndpoint": f"{proto}://{request.site.domain}{reverse('auth-token')}",
-                "sharedInbox": f"{proto}://{request.site.domain}{reverse('inbox')}?shared=y",
-                #"uploadMedia": f"{proto}://{request.site.domain}/social/upload_media/"
+                #"oauthAuthorizationEndpoint": f"{request.scheme}://{request.site.domain}{reverse('auth')}",
+                #"oauthRegistrationEndpoint": f"{request.scheme}://{request.site.domain}/social/api/apps/",
+                "oauthTokenEndpoint": f"{request.scheme}://{request.site.domain}{reverse('auth-token')}",
+                "sharedInbox": f"{request.scheme}://{request.site.domain}{reverse('inbox')}?shared=y",
+                #"uploadMedia": f"{request.scheme}://{request.site.domain}/social/upload_media/"
             },
-            "featured": f"{proto}://{request.site.domain}{reverse('featured')}",
+            "featured": f"{request.scheme}://{request.site.domain}{reverse('featured')}",
             #"featured": {
             #    "type":"OrderedCollection",
             #    "totalItems":0,
             #    "orderedItems":[]
             #},
-            "followers": f"{proto}://{request.site.domain}{reverse('followers')}",
-            "following": f"{proto}://{request.site.domain}{reverse('following')}",
-            "id": f"{proto}://{request.site.domain}{reverse('root')}",
-            "inbox": f"{proto}://{request.site.domain}{reverse('inbox')}?direct=y",
+            "followers": f"{request.scheme}://{request.site.domain}{reverse('followers')}",
+            "following": f"{request.scheme}://{request.site.domain}{reverse('following')}",
+            "id": f"{request.scheme}://{request.site.domain}{reverse('root')}",
+            "inbox": f"{request.scheme}://{request.site.domain}{reverse('inbox')}?direct=y",
             "manuallyApprovesFollowers": True,
             "name": settings.MESSY_FEDIVERSE.get('DISPLAY_NAME', f"{request.site.domain}"),
-            "outbox": f"{proto}://{request.site.domain}{reverse('outbox')}",
+            "outbox": f"{request.scheme}://{request.site.domain}{reverse('outbox')}",
             "preferredUsername": settings.MESSY_FEDIVERSE.get('USERNAME', f"{request.site.domain}"),
             "publicKey": {
-                "id": f"{proto}://{request.site.domain}{reverse('root')}#main-key",
-                "owner": f"{proto}://{request.site.domain}{reverse('root')}",
+                "id": f"{request.scheme}://{request.site.domain}{reverse('root')}#main-key",
+                "owner": f"{request.scheme}://{request.site.domain}{reverse('root')}",
                 "publicKeyPem": settings.MESSY_FEDIVERSE['PUBKEY']
             },
             "summary": "",
             "tag": [],
             "type": "Person",
-            "url": settings.MESSY_FEDIVERSE.get('HOME', f"{proto}://{request.site.domain}{reverse('root')}")
+            "url": settings.MESSY_FEDIVERSE.get('HOME', f"{request.scheme}://{request.site.domain}{reverse('root')}")
         }
         
         ## If url defined without hostname
         userUrl = urlparse(user['url'])
         if not userUrl.netloc:
-            user['url'] = userUrl._replace(scheme=proto, netloc=request.site.domain).geturl()
+            user['url'] = userUrl._replace(scheme=request.scheme, netloc=request.site.domain).geturl()
         
         
         for k in settings.MESSY_FEDIVERSE:
@@ -388,14 +377,13 @@ async def auth_token(request):
 
 #@csrf_exempt
 async def dumb(request, *args, **kwargs):
-    proto = request_protocol(request)
     request_query_string = request.META.get('QUERY_STRING', '')
     if request_query_string:
         request_query_string = f'?{request_query_string}'
     
     return ActivityResponse({
         '@context': 'https://www.w3.org/ns/activitystreams',
-        'id': f"{proto}://{request.site.domain}{request.path}{request_query_string}",
+        'id': f"{request.scheme}://{request.site.domain}{request.path}{request_query_string}",
         'type': 'OrderedCollection',
         'totalItems': 0,
         'orderedItems': [],
@@ -667,11 +655,9 @@ async def send_accept_follow(request, follower):
 
 @csrf_exempt
 def featured(request, *args, **kwargs):
-    proto = request_protocol(request)
-    
     return ActivityResponse({
         "@context": "https://www.w3.org/ns/activitystreams",
-        "id": f"{proto}://{request.site.domain}{reverse('featured')}",
+        "id": f"{request.scheme}://{request.site.domain}{reverse('featured')}",
         "type": "OrderedCollection",
         "totalItems": 0,
         "orderedItems": []
@@ -680,13 +666,12 @@ def featured(request, *args, **kwargs):
 class Replies(View):
     def parent_uri(self, request, rpath):
         rpath = rpath.strip('/')
-        proto = request_protocol(request)
         # request_query_string = request.META.get('QUERY_STRING', '')
         # if request_query_string:
         #     request_query_string = f'?{request_query_string}'
         request_query_string = ''
-        #return f"{proto}://{request.site.domain}{reversepath('replies', rpath)}{request_query_string}"
-        return f"{proto}://{request.site.domain}/{rpath}/{request_query_string}"
+        #return f"{request.scheme}://{request.site.domain}{reversepath('replies', rpath)}{request_query_string}"
+        return f"{request.scheme}://{request.site.domain}/{rpath}/{request_query_string}"
     
     @sync_to_async
     def render_page(self, request, rpath, data_update={}):
@@ -802,7 +787,6 @@ class Replies(View):
     
     async def get(self, request, rpath):
         rpath = rpath.strip('/')
-        proto = request_protocol(request)
         
         content = 'content' in request.GET
         fediverse = fediverse_factory(request)
@@ -813,9 +797,9 @@ class Replies(View):
             
             return ActivityResponse({
                 '@context': "https://www.w3.org/ns/activitystreams",
-                'id': f"{proto}://{request.site.domain}{reversepath('replies', rpath)}",
+                'id': f"{request.scheme}://{request.site.domain}{reversepath('replies', rpath)}",
                 'type': 'CollectionPage',
-                'partOf': f"{proto}://{request.site.domain}{reversepath('replies', rpath)}",
+                'partOf': f"{request.scheme}://{request.site.domain}{reversepath('replies', rpath)}",
                 'items': items
             }, request)
         else:
@@ -840,7 +824,7 @@ class Replies(View):
                     apobject.update(apobject['object'])
                     data['items'][n] = apobject
                 
-                if data['items'][n]['id'].startswith(f'{proto}://{request.site.domain}'):
+                if data['items'][n]['id'].startswith(f'{request.scheme}://{request.site.domain}'):
                     data['items'][n]['is_local'] = True
                 else:
                     data['items'][n]['is_local'] = False
@@ -1226,13 +1210,12 @@ class OrderedItemsView(View):
         return True
     
     def get_request_url(self, request, with_query_string=True):
-        proto = request_protocol(request)
         request_query_string = ''
         if with_query_string:
             request_query_string = request.META.get('QUERY_STRING', '')
             if request_query_string:
                 request_query_string = f'?{request_query_string}'
-        return f'{proto}://{request.site.domain}{request.path}{request_query_string}'
+        return f'{request.scheme}://{request.site.domain}{request.path}{request_query_string}'
     
     @property
     def page_params(self):
@@ -1335,7 +1318,7 @@ class OrderedItemsView(View):
         }
         uri = self.get_request_url(request, True)
         
-        # stderrlog('DEBUG', 'QS:', qs.query.__str__())
+        stderrlog('DEBUG', 'QS:', qs.query.__str__())
         
         try:
             page = int(request.GET.get('page', 0))
@@ -1396,7 +1379,6 @@ class OrderedItemsView(View):
         if is_json_request(request):
             return data
         
-        proto = request_protocol(request)
         data['user_is_staff'] = await request_user_is_staff(request)
         data['user_is_authenticated'] = await request_user_is_authenticated(request)
         
@@ -1422,7 +1404,7 @@ class OrderedItemsView(View):
                 i.update(apobject)
             
             uri = i.get('id', '')
-            if uri.startswith(f'{proto}://{request.site.domain}'):
+            if uri.startswith(f'{request.scheme}://{request.site.domain}'):
                 i['is_local'] = True
             else:
                 i['is_local'] = False
@@ -1596,7 +1578,6 @@ class Outbox(OrderedItemsView):
         if is_json_request(request):
             return data
         
-        proto = request_protocol(request)
         data['user_is_staff'] = await request_user_is_staff(request)
         data['user_is_authenticated'] = await request_user_is_authenticated(request)
         
@@ -1655,7 +1636,7 @@ class Outbox(OrderedItemsView):
                 i.update(apobject)
             
             uri = i.get('id', '')
-            if uri.startswith(f'{proto}://{request.site.domain}'):
+            if uri.startswith(f'{request.scheme}://{request.site.domain}'):
                 i['is_local'] = True
             else:
                 i['is_local'] = False
@@ -1693,13 +1674,13 @@ class Outbox(OrderedItemsView):
                 first_item = data['items'][0]
                 
                 ## Trying to guess original thread url if it's external
-                if not first_item.get('id').startswith(f'{proto}://{request.site.domain}'):
+                if not first_item.get('id').startswith(f'{request.scheme}://{request.site.domain}'):
                     data['original_thread_url'] = first_item.get('url') or first_item.get('id')
                 
                 if (
                     not data['original_thread_url']
                     and is_url(first_item.get('context', ''))
-                    and not first_item.get('context').startswith(f'{proto}://{request.site.domain}')
+                    and not first_item.get('context').startswith(f'{request.scheme}://{request.site.domain}')
                     ## mastodon uses context for storing replies to thread now.
                     and 'context' not in first_item.get('context')
                 ):
@@ -1708,7 +1689,7 @@ class Outbox(OrderedItemsView):
                 if (
                     not data['original_thread_url']
                     and first_item.get('inReplyTo')
-                    and not first_item.get('inReplyTo').startswith(f'{proto}://{request.site.domain}')
+                    and not first_item.get('inReplyTo').startswith(f'{request.scheme}://{request.site.domain}')
                 ):
                     data['original_thread_url'] = first_item.get('inReplyTo')
         
@@ -1767,7 +1748,6 @@ class GlobalFeed(OrderedItemsView):
         if is_json_request(request):
             return data
         
-        proto = request_protocol(request)
         data['user_is_staff'] = await request_user_is_staff(request)
         data['user_is_authenticated'] = await request_user_is_authenticated(request)
         
@@ -1826,7 +1806,7 @@ class GlobalFeed(OrderedItemsView):
                 i.update(apobject)
             
             uri = i.get('id', '')
-            if uri.startswith(f'{proto}://{request.site.domain}'):
+            if uri.startswith(f'{request.scheme}://{request.site.domain}'):
                 i['is_local'] = True
             else:
                 i['is_local'] = False
@@ -1991,12 +1971,12 @@ class TagView(View):
             'object_type': ref.object_type,
             'created_at': ref.created_at,
         }
-        proto = request_protocol(request)
+        
         fediverse = fediverse_factory(request)
         ap_object = None
         
         ## Try local activities first
-        if ref.object_uri.startswith(f'{proto}://{request.site.domain}'):
+        if ref.object_uri.startswith(f'{request.scheme}://{request.site.domain}'):
             activity = await Activity.get_note_activity(ref.object_uri, fediverse)
             if activity:
                 ap_object = activity.get_dict().get('object')
@@ -2009,7 +1989,7 @@ class TagView(View):
                 result['error'] = str(e)
         
         if type(ap_object) is dict:
-            if ref.object_uri.startswith(f'{proto}://{request.site.domain}'):
+            if ref.object_uri.startswith(f'{request.scheme}://{request.site.domain}'):
                 ap_object['is_local'] = True
             else:
                 ap_object['is_local'] = False
@@ -2161,8 +2141,6 @@ def webfinger(request):
     resource = request.GET.get('resource', None)
     result = None
     
-    proto = request_protocol(request)
-    
     if resource and resource.startswith('acct:') and '@' in resource:
         resource = resource.replace('acct:', '',  1)
         username, hostname = resource.split('@')
@@ -2188,7 +2166,7 @@ def webfinger(request):
                         },
                         {
                             'rel': 'http://ostatus.org/schema/1.0/subscribe',
-                            'template': f'{proto}://{request.site.domain}{reverse("interact")}?acct={{uri}}'
+                            'template': f'{request.scheme}://{request.site.domain}{reverse("interact")}?acct={{uri}}'
                         }
                     ]
                 }
@@ -2203,8 +2181,7 @@ def webfinger(request):
 class Status(View):
     async def get(self, request, rpath):
         template = 'messy/fediverse/status.html'
-        proto = request_protocol(request)
-        object_uri = f'{proto}://{request.site.domain}{reversepath("status", rpath)}'
+        object_uri = f'{request.scheme}://{request.site.domain}{reversepath("status", rpath)}'
         data = {}
         fediverse = fediverse_factory(request)
         activity = await sync_to_async(cache.get)(object_uri, None)
@@ -2261,7 +2238,7 @@ class Status(View):
                 apobject['@context'] = fediverse.user.get('@context')
             
             if 'replies' not in apobject:
-                apobject['replies'] = f'{proto}://{request.site.domain}{reversepath("replies", request.path)}'
+                apobject['replies'] = f'{request.scheme}://{request.site.domain}{reversepath("replies", request.path)}'
             
             return ActivityResponse(apobject, request)
         
@@ -2311,11 +2288,10 @@ class Status(View):
         if not await request_user_is_staff(request):
             raise PermissionDenied
         
-        proto = request_protocol(request)
         if is_url(rpath):
             object_uri = rpath
         else:
-            object_uri = f'{proto}://{request.site.domain}{reversepath("status", rpath)}'
+            object_uri = f'{request.scheme}://{request.site.domain}{reversepath("status", rpath)}'
         
         fediverse = fediverse_factory(request)
         activity = await Activity.get_note_activity(object_uri, fediverse)
@@ -2336,8 +2312,7 @@ class Status(View):
         if not await request_user_is_staff(request):
             raise PermissionDenied
         
-        proto = request_protocol(request)
-        object_uri = f'{proto}://{request.site.domain}{reversepath("status", rpath)}'
+        object_uri = f'{request.scheme}://{request.site.domain}{reversepath("status", rpath)}'
         fediverse = fediverse_factory(request)
         activity = await Activity.get_note_activity(object_uri, fediverse)
         if not activity:

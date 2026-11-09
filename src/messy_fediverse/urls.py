@@ -16,6 +16,7 @@ urlpatterns = [
     path('featured/', controller.featured, name='featured'),
     path('api/auth/', controller.auth, name='auth'),
     path('api/auth/token/', controller.auth_token, name='auth-token'),
+    path('misc/', controller.MiscPageView.as_view(), name='misc-page'),
     path('followers/', controller.Followers.as_view(), name='followers'),
     path('following/', controller.Following.as_view(), name='following'),
     path('lists/', controller.ListsIndex.as_view(), name='lists'),

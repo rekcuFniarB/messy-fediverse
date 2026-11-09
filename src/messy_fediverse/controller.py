@@ -6,6 +6,8 @@ from django.core.cache import cache
 from django.core.mail import mail_admins
 from django.core.files.base import ContentFile
 from django.views import View
+from django.views.generic import TemplateView
+from django.contrib.auth.mixins import LoginRequiredMixin
 from django.views.decorators.csrf import csrf_exempt, csrf_protect
 from django.utils.decorators import method_decorator
 from django.templatetags.static import static as _staticurl
@@ -13,6 +15,7 @@ from django.utils.html import strip_tags
 from django.forms.models import model_to_dict
 from django.db.models import Q, F, Exists, OuterRef, Subquery, Count, Max as DbMax, Min as DbMin
 from django.db.models.functions import Now as DbNow
+from django.db.models import prefetch_related_objects
 from .forms import InteractForm, InteractSearchForm, ReplyForm, TagForm, TaggedObjectForm
 from .fediverse import FediverseActor
 from . import html
@@ -1184,6 +1187,10 @@ class OrderedItemsView(View):
     _page_params = None
     pageTitle = ''
     pageClass = ''
+    ## Will contain items from model
+    items = []
+    ## If should count total items for html output
+    countTotal = False
     
     @classmethod
     async def object_to_dict(cls, obj, fields=[]):
@@ -1260,7 +1267,7 @@ class OrderedItemsView(View):
         cache_key = f'count-{id(sql_str)}'
         totalCount = await cache.aget(cache_key)
         if not totalCount:
-            if is_json_request(self.request):
+            if is_json_request(self.request) or self.countTotal:
                 totalCount = await qs.acount()
                 await cache.aset(totalCount, 60 * 60 * 24)
             else:
@@ -1309,7 +1316,8 @@ class OrderedItemsView(View):
     async def get(self, request, *args, **kwargs):
         if not await self.allowed():
             raise PermissionDenied
-            
+        
+        self.items = [] ## resetting, otherwise it collects from other requests
         self.set_filter(request, *args, **kwargs)
         qs = await self.get_queryset()
         data = {
@@ -1318,7 +1326,7 @@ class OrderedItemsView(View):
         }
         uri = self.get_request_url(request, True)
         
-        stderrlog('DEBUG', 'QS:', qs.query.__str__())
+        # stderrlog('DEBUG', 'QS:', qs.query.__str__())
         
         try:
             page = int(request.GET.get('page', 0))
@@ -1343,7 +1351,11 @@ class OrderedItemsView(View):
             
             async for _item in qs:
                 ids.append(_item.pk)
+                self.items.append(_item)
                 _item = await self.object_to_dict(_item, self.select)
+                ## If dict contains just one value,
+                ## we unwrap that value from dict.
+                ## Usually it's just an URI.
                 if len(_item) == 1:
                     _item = tuple(_item.values())[0]
                 data['orderedItems'].append(_item)
@@ -1352,6 +1364,7 @@ class OrderedItemsView(View):
                 ## we have one extra item
                 nextPageItem = data['orderedItems'].pop()
                 nextPageId = ids.pop()
+                self.items.pop()
                 ## Has next page
                 data['next'] = update_url(uri, {'page': nextPageId})
             
@@ -1432,6 +1445,8 @@ class OrderedItemsView(View):
 class Followers(OrderedItemsView):
     model = Follower
     select = ('uri',)
+    template = 'messy/fediverse/followers.html'
+    countTotal = True
     
     def set_filter(self, request, *args, **kwargs):
         fediverseUser = fediverse_factory(request)
@@ -1441,7 +1456,32 @@ class Followers(OrderedItemsView):
             'object_uri': fediverseUser.id
         }
         return self.query_filter
-
+    
+    async def postprocess(self, request, data):
+        '''Postprocess for tempaltes.'''
+        
+        if is_json_request(request):
+            return data
+        
+        data['user_is_staff'] = await request_user_is_staff(request)
+        data['user_is_authenticated'] = await request_user_is_authenticated(request)
+        # stderrlog('SELF ITEMS:', self.items, data)
+        await sync_to_async(prefetch_related_objects)(self.items, 'activity')
+        
+        data['model_meta'] = self.model._meta
+        data['items'] = self.items
+        
+        return data
+    
+    async def allowed(self):
+        '''Who is allowed to see this data'''
+        if is_json_request(self.request):
+            return True
+        
+        if await request_user_is_authenticated(self.request):
+            return True
+        
+        return False
 
 class Outbox(OrderedItemsView):
     model = Activity
@@ -2554,3 +2594,18 @@ class Interact(View):
         
         data['form'] = form
         return render(request, 'messy/fediverse/interact.html', data)
+
+class MiscPageView(LoginRequiredMixin, TemplateView):
+    template_name = "messy/fediverse/misc-page.html"
+
+    # def get_context_data(self, **kwargs):
+    #     # Calling the base implementation first to get a context
+    #     context = super().get_context_data(**kwargs)
+    # 
+    #     context["misc_nav"] = (
+    #         {
+    #             "title": "Django Documentation",
+    #             "url": "https://djangoproject.com"
+    #         },
+    #     )
+    #     return context

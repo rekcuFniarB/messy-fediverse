@@ -77,3 +77,6 @@
 .messy-fediverse-page-highlights ~ nav .messy-fediverse-nav-highlights {
     border-top: 1px solid #333;
 }
+.messy-fediverse-page-misc ~ nav .messy-fediverse-nav-misc {
+    border-top: 1px solid #333;
+}

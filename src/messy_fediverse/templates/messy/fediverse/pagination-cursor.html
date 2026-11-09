@@ -1,0 +1,14 @@
+<div class="pagination-cursor">
+{% if prev %}
+
+    {% if partOf %}
+    <a href="{{ partOf }}" title="start" class="btn btn-default"><i class="ion-ios-skipbackward"></i><i class="ion-ios-play icon-rotate-180"></i></a>
+    {% endif %}
+
+<a href="{{ prev }}" title="newer" class="btn btn-default"><i class="ion-ios-play icon-rotate-180"></i><i class="ion-ios-play icon-rotate-180"></i></a>
+{% endif %}
+
+{% if next %}
+<a href="{{ next }}" title="older" class="btn btn-default"><i class="ion-ios-play"></i><i class="ion-ios-play"></i></a>
+{% endif %}
+</div>

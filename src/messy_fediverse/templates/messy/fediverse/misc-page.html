@@ -1,0 +1,35 @@
+{% extends 'messy/fediverse/base.html' %}
+
+{% block title %}{{ block.super }} Following{% endblock title %}
+
+{% block pagetype %}<div class="messy-fediverse-page-misc"></div>{% endblock %}
+
+{% block main %}
+<script type="application/json"
+    class="section-metadata"
+    data-path="{{ request.path }}">
+{
+    "title": "Misc",
+    "pageClass": "messy-fediverse-page-misc"
+}
+</script>
+
+<nav id="messy-fediverse-misc" class="messy-fediverse">
+    <h2>Misc</h2>
+
+    <ul>
+        <li>
+            <a href="{% url 'messy-fediverse:following' %}"
+                class="messy-fediverse-nav-following">Following</a>
+        </li>
+        <li>
+            <a href="{% url 'messy-fediverse:followers' %}"
+                class="messy-fediverse-nav-followers">Followers</a>
+        </li>
+        <li>
+            <a href="{% url 'messy-fediverse:lists' %}"
+                class="messy-fediverse-nav-lists">Lists</a>
+        </li>
+    </ul>
+</nav>
+{% endblock %}

@@ -19,7 +19,11 @@
 
     <ul>
     {% for item in following %}
-        <li><a href="{% url 'messy-fediverse:interact' %}?acct={{ item.id }}">{{ item.preferredUsername }}@{{ item.fediverseInstance }}</a>
+        <li>{% spaceless %}
+            <a href="{% url 'messy-fediverse:interact' %}?acct={{ item.id }}">
+                {{ item.preferredUsername }}@{{ item.fediverseInstance }}
+            </a>
+        {% endspaceless %}</li>
     {% endfor %}
     </ul>
 </div>

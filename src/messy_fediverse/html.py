@@ -10,11 +10,13 @@ file_types = {
     'webp': 'image/webp',
     'webm': 'video/webm',
     'mp4':  'video/mp4',
-    'm4a':  'audio/m4a',
+    'm4a':  'audio/mp4',
     'mp3':  'audio/mpeg',
     'ogg':  'audio/ogg',
     'opus': 'audio/ogg',
-    'mkv':  'video/mkv',
+    'mkv':  'video/matroska',
+    'mka':  'audio/matroska',
+    'pdf':  'application/pdf',
     'html': 'text/html',
     'txt':  'text/plain'
 }

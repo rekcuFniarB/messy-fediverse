@@ -10,6 +10,7 @@ from asgiref.sync import sync_to_async
 from time import sleep
 from datetime import datetime
 import os
+from urllib.parse import urlparse
 # import tracemalloc
 
 class Command(BaseCommand):
@@ -195,6 +196,28 @@ class Command(BaseCommand):
                     else:
                         raise
                 
+                ## If is incoming and pending signature verification
+                if activity.activity_data is None:
+                    activity.activity_data = {}
+                if activity.incoming and activity.activity_data.get('_verified') == 'pending':
+                    verified = await self.verify_incoming_signature(self._request, self._actor, activity)
+                    if verified:
+                        activity.activity_data['_verified'] = 'signature'
+                        activity.disabled = False
+                    else:
+                        ## Try fetching object from origin instance
+                        try:
+                            obj = await self._actor.aget(activity.object_uri)
+                            if type(obj) is dict:
+                                activity.activity_data['_verified'] = 'fetch'
+                                activity.disabled = False
+                            else:
+                                activity.disabled = True
+                        except BaseException:
+                            activity.disabled = True
+                    
+                    await sync_to_async(activity.save)()
+                
                 is_done = True
                 
                 ## If is outgoing
@@ -247,6 +270,73 @@ class Command(BaseCommand):
         activity_dict = await actor.federate(activity_dict)
         return await save_activity(request, activity_dict)
     
+    async def verify_incoming_signature(self, request, actor, activity):
+        '''
+        Verify ActivityPub HTTP Signature for a pending incoming activity.
+        Returns True if signature is valid, False otherwise.
+        '''
+        meta = activity.activity_data.get('_requestMeta', {}) if activity.activity_data else {}
+        if not meta:
+            return False
+        
+        signature_header = meta.get('HTTP_SIGNATURE', '')
+        if not signature_header:
+            return False
+        
+        ## Parse signature header
+        signature = {}
+        for kvs in signature_header.split(','):
+            kv = kvs.strip().split('=', 1)
+            if len(kv) < 2:
+                kv.append('')
+            signature[kv[0].strip()] = kv[1].strip().strip('"')
+        
+        for k in ('keyId', 'headers', 'signature'):
+            if k not in signature:
+                return False
+        
+        headers = [h.strip() for h in signature['headers'].split(' ') if h.strip()]
+        
+        ## Reconstruct string to sign
+        path = urlparse(activity.object_uri).path if activity.object_uri else ''
+        query_string = meta.get('QUERY_STRING', '')
+        if query_string:
+            full_path = path + '?' + query_string
+        else:
+            full_path = path
+        
+        str2sign = []
+        for h in headers:
+            if h == '(request-target)':
+                v = f'post {full_path}'
+            else:
+                meta_key = 'HTTP_' + h.upper().replace('-', '_')
+                v = meta.get(meta_key, '')
+            str2sign.append(f'{h}: {v}')
+        
+        str2sign = '\n'.join(str2sign)
+        
+        ## Fetch actor public key
+        actor_uri = signature.get('keyId', '')
+        actor_info = await actor.aget(actor_uri)
+        if type(actor_info) is not dict:
+            return False
+        
+        actor_key = actor_info.get('publicKey', {})
+        if not actor_key or actor_key.get('id') != actor_uri:
+            return False
+        
+        public_key_pem = actor_key.get('publicKeyPem', '')
+        if not public_key_pem:
+            return False
+        
+        ## Verify signature
+        try:
+            result = await actor.crypt_verify(str2sign, signature['signature'], public_key_pem)
+            return result is None
+        except BaseException:
+            return False
+    
     @staticmethod
     def isSqlLostException(exception):
         '''Checks if exception is for 'lost connection'.
@@ -271,4 +361,3 @@ class Command(BaseCommand):
             return True
         
         return False
-    

@@ -102,8 +102,8 @@ class WrapIntoStatus:
     '''
     def __init__(self, get_response):
         self.get_response = get_response
-        self.timeregex = re.compile(b'<time [^>]*datetime="(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}\+?[^"\s]*)"')
-        self.titleregex = re.compile(b'<title>([^<>]+?)</title>')
+        self.timeregex = re.compile(rb'<time [^>]*datetime="(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}\+?[^"\s]*)"')
+        self.titleregex = re.compile(rb'<title>([^<>]+?)</title>')
     def __call__(self, request):
         from .models import Activity
         from .controller import fediverse_factory, root_json, ActivityResponse
@@ -219,7 +219,6 @@ class VerifySignature:
         return await self.get_response(request)
     
     async def process_view(self, request, view_func, view_args, view_kwargs):
-        from .controller import fediverse_factory
         from .urls import app_name
         
         ## Whe check only views which have csrf_exempt because only those views
@@ -235,82 +234,6 @@ class VerifySignature:
                 return self.response_error(request, 'Digest required')
             
             digest = digest.replace('SHA-256=', '').replace('sha-256=', '')
-            
-            signature_string = request.headers.get('signature', None)
-            if not signature_string:
-                return self.response_error(request, 'Signature required')
-            
-            signature = self.parse_signature(signature_string)
-            
-            for k in ('keyId', 'headers', 'signature'):
-                if k not in signature:
-                    return self.response_error(request, f'Bad signature, {k} missing')
-            
-            if '(request-target)' not in signature['headers']:
-                return self.response_error(request, 'Signature requires request target.')
-            
-            if signature.get('algorithm', 'rsa-sha256') not in ('sha256', 'rsa-sha256'):
-                return self.response_error(request, 'Unsupported signature algorithm')
-            
-            actor = None
-            fediverse = fediverse_factory(request)
-            
-            try:
-                actor = await fediverse.aget(signature['keyId'])
-            except BaseException as e:
-                if settings.DEBUG:
-                    ## Raise original exception (probably HTTPError)
-                    raise e
-                else:
-                    raise PermissionDenied(*e.args)
-            
-            if type(actor) is not dict:
-                return self.response_error(request, f'Actor verify failed: {type(actor)} {actor}')
-            
-            actorKey = actor.get('publicKey', None)
-            if not actorKey:
-                return self.response_error(request, 'No actor public key.')
-            
-            if 'id' not in actorKey or actorKey['id'] != signature['keyId']:
-                return self.response_error(request, 'Bad actor key ID')
-            
-            
-            verify_errors = []
-            try_paths = []
-            if request.META.get('QUERY_STRING'):
-                try_paths.append(request.path + '?' + request.META.get('QUERY_STRING'))
-            try_paths.append(request.path)
-            
-            ## Trying to verify signature for path with query string and without
-            ## In the past path without query string was proper signature
-            ## but mastodon began to use query string for signatures at some time
-            for path in try_paths:
-                str2sign = []
-            
-                for h in signature['headers']:
-                    if h == '(request-target)':
-                        v = f'post {path}'
-                    else:
-                        v  = request.headers.get(h, '')
-                    
-                    str2sign.append(f'{h}: {v}')
-                
-                str2sign = '\n'.join(str2sign)
-                
-                try:
-                    verifyResult = fediverse.crypt_verify(str2sign, signature['signature'], actorKey.get('publicKeyPem'))
-                    if verifyResult is None:
-                        ## Signature check successful
-                        verify_errors.clear()
-                        break
-                except BaseException as e:
-                    if not len(e.args):
-                        e.args = (str2sign, signature['signature'], actorKey.get('publicKeyPem'), request.META.get('HTTP_REMOTE_ADDR'), request.headers.get('user-agent'))
-                    verify_errors.append(e)
-            
-            if len(verify_errors):
-                error_text = ', '.join(map(repr, verify_errors))
-                return self.response_error(request, f'Signature verification failed: {error_text}')
             
             ## Checking digest
             body_digest = b64encode(sha256(request.body).digest()).decode('utf-8')
@@ -335,22 +258,3 @@ class VerifySignature:
             }, status=403)
         else:
             raise PermissionDenied(message)
-    
-    def parse_signature(self, sig_string):
-        kv_strings = [ x.strip() for x in sig_string.split(',') ]
-        signature = {}
-        for kvs in sig_string.split(','):
-            ## kvs is 'key="value"'
-            kv = kvs.strip().split('=', 1)
-            if len(kv) < 2:
-                kv.append('')
-            signature[kv[0]] = kv[1].strip(' "')
-        if 'headers' in signature:
-            headers = []
-            for h in signature['headers'].split(' '):
-                h = h.strip()
-                if h:
-                    headers.append(h)
-            signature['headers'] = headers
-        
-        return signature

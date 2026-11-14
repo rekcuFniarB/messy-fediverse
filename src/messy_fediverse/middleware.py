@@ -39,6 +39,22 @@ def is_same_site_referer(request):
 
     return referer_netloc == current_host
 
+def request_is_ajax(request):
+    '''
+    Check if request is AJAX (if header X-Requested-With is XMLHttpRequest).
+    '''
+    return request.META.get('HTTP_X_REQUESTED_WITH', '').upper() == 'XMLHTTPREQUEST'
+
+def is_json_request(request):
+    '''Check if client wants JSON'''
+    accept = request.META.get('HTTP_ACCEPT', '').lower()
+    return 'application/' in accept and 'json' in accept
+
+def is_post_json(request):
+    '''Check if request posts json'''
+    content_type = request.META.get('CONTENT_TYPE', '')
+    return 'application/' in content_type and 'json' in content_type
+
 @sync_to_async
 def request_user_is_staff(request):
     ## We can't just use request.user.is_staff from async views
@@ -113,7 +129,6 @@ class WrapIntoStatus:
         response = self.get_response(request)
         ## After view
         timestring = '1970-01-01T00:00:00+00:00'
-        request_accept = request.headers.get('accept', '')
         path = request.path
         lang_code = getattr(request, 'LANGUAGE_CODE', None)
         ## Getting rid of lang code from path
@@ -131,7 +146,7 @@ class WrapIntoStatus:
         home = home and (path == home or request.path == home)
         
         if (request.method == 'GET' and response.status_code == 200 and
-                request_accept.startswith('application/activity+json') and
+                is_json_request(request) and
                 request.resolver_match and request.resolver_match.app_name != app_name):
             
             if home:
@@ -249,7 +264,7 @@ class VerifySignature:
         if hasattr(message, 'args'):
             message = error.args
         
-        if request.content_type and 'json' in request.content_type:
+        if is_post_json(request):
             stderrlog('DEBUG', 'RESPONSE ERROR:', error, 'REQUEST:', request, request.META)
             return JsonResponse({
                 'success': False,

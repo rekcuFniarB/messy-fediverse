@@ -30,7 +30,11 @@ from asgiref.sync import sync_to_async, async_to_sync
 import asyncio
 import aiohttp
 from .models import Activity, Follower, FederatedEndpoint, Tag, TaggedObject
-from .middleware import stderrlog, is_same_site_referer, request_user_is_staff, request_user_is_authenticated
+from .middleware import (
+    stderrlog, is_same_site_referer, request_user_is_staff,
+    request_user_is_authenticated, is_json_request, is_post_json,
+    request_is_ajax,
+)
 # from functools import partial
 # from pprint import pprint
 import traceback
@@ -155,21 +159,6 @@ def staticurl(request, path):
     if not path.startswith('http://') and not path.startswith('https://'):
         path = f'https://{request.site.domain}/{path.lstrip("/")}'
     return path
-
-def is_json_request(request):
-    '''Check if client wants JSON'''
-    accept = request.META.get('HTTP_ACCEPT', '').lower()
-    return 'application/' in accept and 'json' in accept
-
-def is_post_json(request):
-    '''Check if request posts json'''
-    return 'application/' in request.content_type and 'json' in request.content_type
-
-def is_ajax(request):
-    '''
-    Check if request is AJAX (if header X-Requested-With is XMLHttpRequest).
-    '''
-    return request.META.get('HTTP_X_REQUESTED_WITH', '').upper() == 'XMLHTTPREQUEST'
 
 def is_url(url):
     return type(url) is str and (url.startswith('https://') or url.startswith('http://'))
@@ -901,7 +890,7 @@ class Replies(View):
                     uri = self.parent_uri(request, rpath)
                 
                 ## Redirecting to federated instance's form
-                if is_ajax(request):
+                if request_is_ajax(request):
                     return JsonResponse({'popup': link_template.format(uri=form.cleaned_data['uri'])})
                 else:
                     return redirect(link_template.format(uri=form.cleaned_data['uri']))

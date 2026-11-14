@@ -30,15 +30,23 @@ class Activity(models.Model):
     
     TYPES = (
         ('',             ''),
+        ## Was fetched by us
         ('CCH',     'Cache'),
+        ## To be processed by background worker
+        ('PRQ', 'Pending request'),
+        ## Validation failed
+        ('INV',   'Invalid'),
         ('FOL',    'Follow'),
         ('UNF',  'Unfollow'),
         ('UND',      'Undo'),
+        ## Usually 'accept' response to follow request
         ('ACC',    'Accept'),
         ('CRE',    'Create'),
         ('UPD',    'Update'),
+        ## Actually not used by activities, belongs to object
         ('NTE',      'Note'),
         ('DEL',    'Delete'),
+        ## Not used by activities, belongs to deleted object
         ('TOM', 'Tombstone'),
         ('LKE',      'Like'),
         ('ANN',  'Announce'),

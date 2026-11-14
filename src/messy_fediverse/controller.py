@@ -210,20 +210,20 @@ async def email_notice(request, activity):
             subj_parts.append(summary)
         attributedTo = ap_object.get('attributedTo', None)
         if attributedTo:
-            if 'authorInfo' not in activity:
-                activity['authorInfo'] = {}
+            if '_actor_info' not in activity:
+                activity['_actor_info'] = {}
                 try:
-                    activity['authorInfo'] = await fediverse.aget(attributedTo)
+                    activity['_actor_info'] = await fediverse.aget(attributedTo)
                 except:
                     pass
             
-            if 'authorInfo' in activity and type(activity['authorInfo']) is dict:
-                if 'preferredUsername' in activity['authorInfo'] and not activity['authorInfo'].get('user@host', None):
-                    activity['authorInfo']['user@host'] = ''
-                    author_url = urlparse(activity['authorInfo']['id'])
-                    activity['authorInfo']['user@host'] = f'{activity["authorInfo"]["preferredUsername"]}@{author_url.netloc}'
+            if '_actor_info' in activity and type(activity['_actor_info']) is dict:
+                if 'preferredUsername' in activity['_actor_info'] and not activity['_actor_info'].get('user@host', None):
+                    activity['_actor_info']['user@host'] = ''
+                    author_url = urlparse(activity['_actor_info']['id'])
+                    activity['_actor_info']['user@host'] = f'{activity["_actor_info"]["preferredUsername"]}@{author_url.netloc}'
                 subj_parts.append('by')
-                subj_parts.append(activity['authorInfo'].get('user@host', ''))
+                subj_parts.append(activity['_actor_info'].get('user@host', ''))
         
         content = ap_object.get('content', '')
         
@@ -408,6 +408,10 @@ async def save_activity(request, activity_dict):
     creating = False
     activity_id = 0
     created_id = 0
+    ## If it is background worker process
+    worker_pid = getattr(request, 'worker_pid', 0)
+    ts_now = datetime.now().timestamp()
+    actorInfo = None
     
     if type(apobject) is dict:
         object_uri = apobject.get('id', '')
@@ -418,6 +422,10 @@ async def save_activity(request, activity_dict):
     
     actType = None
     act_type = activity_dict.get('type', apobject.get('type', ''))
+    
+    if not activity_dict.get('_originalActivityType'):
+        activity_dict['_originalActivityType'] = act_type
+    
     for def_type in Activity.TYPES:
         if act_type == def_type[1]:
             actType = def_type[0]
@@ -453,10 +461,21 @@ async def save_activity(request, activity_dict):
         or ''
     ).replace('Z', '+00:00')
     
-    fediverse = fediverse_factory(request)
+    actor_urlp = urlparse(activity_dict.get('actor', None))
+    actor_domain = actor_urlp.hostname
+    our_domain = request.get_host()
+    our_domain = urlparse(f'//{our_domain}').hostname or ''
+    if '_request_meta' not in activity_dict:
+        from .middleware import FrozenRequest
+        activity_dict['_request_meta'] = (await FrozenRequest.from_request(request)).to_dict()
+    
+    if not isinstance(activity_dict.get("_processing_ts"), list):
+        activity_dict["_processing_ts"] = []
+    activity_dict["_processing_ts"].append([worker_pid, ts_now])
     
     ## Comparing activity actor uri to ours
-    if activity_dict.get('actor', None) == fediverse.id:
+    # if activity_dict.get('actor', None) == fediverse.id:
+    if actor_domain and actor_domain == our_domain:
         ## Is outgoing
         incoming = False
     
@@ -465,7 +484,7 @@ async def save_activity(request, activity_dict):
     if not activity:
         activity = Activity(
             uri=activity_uri,
-            activity_type=actType,
+            activity_type='PRQ', ## is initial pending request, then worker will set to actType,
             actor_uri=activity_dict.get('actor', '') or '',
             object_uri=object_uri,
             context=context,
@@ -483,17 +502,27 @@ async def save_activity(request, activity_dict):
         or activity_dict.get('inReplyTo')
         or ''
     )
+    
+    if worker_pid:
+        activity.activity_type = actType
+        
+        fediverse = fediverse_factory(request)
+        
+        if not activity_dict.get('_actor_info') and activity.actor_uri:
+            ## We cache actor info in place so that
+            ## we don't request it again when displaying.
+            actorInfo = await fediverse.aget(activity.actor_uri)
+            if type(actorInfo) is dict:
+                activity_dict['_actor_info'] = actorInfo
+    
     ## If updating, context might not known during presave yet,
     ## in some cases we update context in fetch_parents()
     ## by finding root activity.
     activity.context = context
     activity.activity_data = activity_dict
     
-    ## If incoming and pending signature verification, hide until worker verifies
-    if incoming and activity_dict.get('_verified') == 'pending':
-        activity.disabled = True
-    
     ## Mark as already processed
+    ## Probably we are already in the worker
     if '_response' in activity_dict:
         activity.processing_status = 20
     
@@ -502,6 +531,7 @@ async def save_activity(request, activity_dict):
         activity_id = activity.pk
         if creating:
             created_id = activity_id
+    
     except BaseException as e:
         trace_msg = traceback.format_exc()
         
@@ -529,6 +559,11 @@ async def save_activity(request, activity_dict):
             html_message=message
         )
     
+    if not worker_pid:
+        ## Exiting here, background worker will validate signature
+        ## and call this function again to complete processing.
+        return activity
+    
     if actType == 'UPD':
         ## If activity updates other activity,
         ## we mark old activities for this object_uri.
@@ -551,15 +586,17 @@ async def save_activity(request, activity_dict):
     ## If just created new activity
     ## FIXME move to worker, maybe just
     ## compare processing_status to 10
-    if created_id:
+    ## Already moved to worker, just get
+    ## rid of this `if` block.
+    if created_id or True:
+        fediverse = fediverse_factory(request)
+        
         ## If follow activity received
         if actType == 'FOL':
             ## If follow request
             follower = await Follower.objects.filter(uri=activity.actor_uri, object_uri=object_uri).afirst()
-            ## Retrieving actor info from the net
-            actorInfo = await fediverse.aget(activity.actor_uri)
-            ## If actor info is valid
             endpoint_url = None
+            ## If actor info is valid
             if type(actorInfo) is dict:
                 if 'endpoints' in actorInfo and type(actorInfo['endpoints']) is dict and 'sharedInbox' in actorInfo['endpoints']:
                     endpoint_url = actorInfo['endpoints']['sharedInbox']
@@ -825,7 +862,8 @@ class Replies(View):
                 else:
                     data['items'][n]['is_local'] = False
                 
-                if 'authorInfo' not in apobject or not apobject['authorInfo']:
+                apobject['authorInfo'] =  apobject.get('_actor_info') or apobject.get('authorInfo')
+                if not apobject['authorInfo']:
                     if 'attributedTo' in apobject and is_url(apobject['attributedTo']):
                         apobject['authorInfo'] = await fediverse.aget(apobject['attributedTo'])
                 
@@ -1098,20 +1136,6 @@ class Inbox(View):
         ## If we've received a JSON
         if is_post_json(request):
             data = json.loads(request.body)
-            fediverse = fediverse_factory(request)
-            if '_requestMeta' not in data:
-                data['_requestMeta'] = {}
-            for k in request.META:
-                if k.startswith('HTTP_'):
-                    data['_requestMeta'][k] = request.META[k]
-            
-            # Mark activity as pending signature verification
-            data['_verified'] = 'pending'
-            
-            # result = await fediverse.process_object(data)
-            # data['_json'] = result
-            if 'actor' in data and 'authorInfo' not in data and 'authorInfo' not in data.get('object', {}):
-                data['authorInfo'] = await fediverse.aget(data['actor'])
             
             should_log_request = False
             saveResult = await save_activity(request, data)
@@ -1120,7 +1144,8 @@ class Inbox(View):
                 should_log_request = False
                 responseData['success'] = True
                 responseData['status'] = 'success'
-                responseData['message'] = "Fuck off, I don't give a fuck what you delete."
+                ## Actually we don't have anything to delete.
+                responseData['message'] = 'Probably deleted something.'
         
         if should_log_request:
             ## DEBUG
@@ -1130,8 +1155,12 @@ class Inbox(View):
             await asyncio.gather(*tasks)
         
         responseData['success'] = bool(saveResult)
-        if saveResult:
+        if saveResult and settings.DEBUG:
+            from .middleware import remove_private_properties
+            ## Well, actually returning activity object is not required,
+            ## it was just for debugging.
             responseData['activity'] = saveResult.get_dict()
+            responseData['activity'] = remove_private_properties(responseData['activity'])
         
         return JsonResponse(responseData, status=202)
 
@@ -1418,7 +1447,8 @@ class OrderedItemsView(View):
                     + f'?thread={urlquote(i["context"])}')
             
             actor = None
-            if 'authorInfo' not in i and 'attributedTo' in i:
+            i['authorInfo'] = i.get('_actor_info') or i.get('authorInfo')
+            if not i['authorInfo'] and 'attributedTo' in i:
                 i['authorInfo'] = {}
                 if not actor:
                     actor = fediverse_factory(request)
@@ -1677,7 +1707,8 @@ class Outbox(OrderedItemsView):
                     + f'?thread={urlquote(i["context"])}')
             
             actor = None
-            if 'authorInfo' not in i and 'attributedTo' in i:
+            i['authorInfo'] = i.get('_actor_info') or i.get('authorInfo')
+            if not i['authorInfo'] and 'attributedTo' in i:
                 i['authorInfo'] = {}
                 if not actor:
                     actor = fediverse_factory(request)
@@ -1847,7 +1878,8 @@ class GlobalFeed(OrderedItemsView):
                     + f'?thread={urlquote(i["context"])}')
             
             actor = None
-            if 'authorInfo' not in i and 'attributedTo' in i:
+            i['authorInfo'] = i.get('_actor_info') or i.get('authorInfo')
+            if not i['authorInfo'] and 'attributedTo' in i:
                 i['authorInfo'] = {}
                 if not actor:
                     actor = fediverse_factory(request)

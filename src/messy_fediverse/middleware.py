@@ -1,5 +1,5 @@
 import syslog
-from django.http import JsonResponse
+from django.http import HttpRequest, JsonResponse
 from django.core.exceptions import PermissionDenied #, BadRequest
 from django.conf import settings
 from django.urls import resolve, reverse
@@ -14,6 +14,7 @@ import aiohttp
 from asgiref.sync import async_to_sync, sync_to_async
 from asgiref.sync import iscoroutinefunction, markcoroutinefunction
 from functools import wraps
+from dataclasses import dataclass
 
 def stderrlog(*msg):
     if (
@@ -23,6 +24,17 @@ def stderrlog(*msg):
         or 'warning' in msg or 'WARNING' in msg
     ):
         print(*msg, file=sys.stderr, flush=True)
+
+def remove_private_properties(data):
+    if isinstance(data, dict):
+        return {
+            k: remove_private_keys_recursive(v)
+            for k, v in data.items()
+            if not (isinstance(k, str) and k.startswith("_"))
+        }
+    if isinstance(data, list):
+        return [remove_private_keys_recursive(item) for item in data]
+    return data
 
 def is_same_site_referer(request):
     '''
@@ -66,6 +78,188 @@ def request_user_is_authenticated(request):
     ## We can't just use request.user.is_staff from async views
     ## due to lazy executions, so we get errors.
     return request.user.is_authenticated
+
+@sync_to_async
+def get_request_user_id(request):
+    '''
+    Gets user ID from request.
+    request: HttpRequest
+    returns django User object or None
+    '''
+    
+    if hasattr(request, "user") and hasattr(request.user, "id"):
+        return request.user.id
+    return None
+
+def get_request_headers_dict(request: HttpRequest) -> dict[str, str]:
+    return {
+        key: value
+        for key, value in request.META.items()
+        if (key.startswith("HTTP_") or key in ("CONTENT_TYPE", "CONTENT_LENGTH"))
+        and isinstance(value, str)
+    }
+
+from dataclasses import asdict, dataclass, field
+from typing import Any, Optional
+from django.contrib.auth import get_user_model
+from django.contrib.auth.models import AnonymousUser
+from django.http import HttpRequest
+from django.test import AsyncRequestFactory, RequestFactory
+from django.apps import apps
+from django.core.exceptions import ObjectDoesNotExist
+
+@dataclass
+class FrozenRequest:
+    '''
+    Used for serializing and restoring request objects.
+    Useful for background workers.
+    '''
+    method: str
+    scheme: str
+    path: str
+    body: str
+    content_type: str
+    headers: dict[str, str] = field(default_factory=dict)
+    user_id: Optional[Any] = None
+    site_id: Optional[Any] = None
+    
+    @staticmethod
+    def get_request_site_id(request: HttpRequest) -> Optional[int]:
+        if not apps.is_installed("django.contrib.sites"):
+            return None
+
+        site = getattr(request, "site", None)
+        if site is not None and getattr(site, "id", None) is not None:
+            return int(site.id)
+
+        try:
+            from django.contrib.sites.shortcuts import get_current_site
+
+            current_site = get_current_site(request)
+            return int(current_site.id) if getattr(current_site, "id", None) is not None else None
+        except Exception:
+            return None
+    
+    @classmethod
+    async def from_request(cls, request: HttpRequest, save_body=False) -> "FrozenRequest":
+        '''
+        Async factory, makes FrozenRequest object from request.
+        request: HttpRequest
+        save_body: ignore body data.
+        Returns FrozenObject
+        '''
+        
+        user_id = await get_request_user_id(request)
+        site_id = await sync_to_async(cls.get_request_site_id)(request)
+        body = ''
+        if save_body:
+            body = request.body.decode('utf-8', errors='ignore')
+        
+        return cls(
+            method=request.method,
+            path=request.get_full_path(),
+            scheme=request.scheme or 'https',
+            body=body,
+            content_type=request.content_type,
+            headers=get_request_headers_dict(request),
+            user_id=user_id,
+            site_id=site_id,
+        )
+    
+    def to_dict(self) -> dict[str, Any]:
+        '''Returns a JSON-serializable dict.'''
+        return asdict(self)
+    
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "FrozenRequest":
+        '''Rebuilds the FrozenRequest wrapper from a dict.'''
+        return cls(
+            method=data.get('method', 'GET'),
+            path=data.get('path', '/'),
+            scheme=data.get('scheme', 'https'),
+            body=data.get('body', ''),
+            content_type=data.get('content_type', ''),
+            headers=data.get('headers', {}),
+            user_id=data.get('user_id'),
+            site_id=data.get('site_id')
+        )
+    
+    def to_request(self) -> HttpRequest:
+        '''
+        Reconstructs a synchronous WSGIRequest object.
+        '''
+        request_factory = RequestFactory()
+        factory_method = getattr(request_factory, self.method.lower())
+        User = get_user_model()
+
+        request = factory_method(
+            path=self.path,
+            data=self.body,
+            content_type=self.content_type,
+            secure=(self.scheme == 'https'),
+            **self.headers,
+        )
+
+        if self.user_id is not None:
+            request.user = User.objects.get(id=self.user_id)
+        else:
+            request.user = AnonymousUser()
+        
+        if self.site_id is not None and apps.is_installed('django.contrib.sites'):
+            from django.contrib.sites.models import Site
+
+            try:
+                request.site = Site.objects.get(pk=self.site_id)
+            except ObjectDoesNotExist:
+                pass
+
+        return request
+    
+    async def ato_request(self) -> HttpRequest:
+        '''
+        Reconstructs an async ASGIRequest for async workers.
+        '''
+        factory = AsyncRequestFactory()
+        User = get_user_model()
+
+        request = factory.generic(
+            method=self.method,
+            path=self.path,
+            data=self.body,
+            content_type=self.content_type,
+            secure=(self.scheme == 'https'),
+            **self.headers,
+        )
+        
+        # ASGIRequest in Django 4.1 reads request.scheme from self.scope['scheme']
+        if hasattr(request, 'scope'):
+            request.scope["scheme"] = self.scheme
+        
+        if self.user_id is not None:
+            request.user = await User.objects.aget(id=self.user_id)
+        else:
+            request.user = AnonymousUser()
+        
+        if self.site_id is not None and apps.is_installed('django.contrib.sites'):
+            from django.contrib.sites.models import Site
+
+            try:
+                request.site = await Site.objects.aget(pk=self.site_id)
+            except ObjectDoesNotExist:
+                pass
+
+        return request
+
+    ## Usage:
+    ##   Saving:
+    ##     serialized = await FrozenRequest.from_request(request)
+    ##     task_record = await MyTaskModel.objects.acreate(request_data=serialized.to_dict())
+    ##   Restoring:
+    ##     task_record = await MyTaskModel.objects.aget(id=task_id)
+    ##     serialized = FrozenRequest.from_dict(task_record.request_data)
+    ##     live_like_request = await serialized.ato_request()
+    ##     await my_downstream_handler(live_like_request)
+
 
 class StdErrLogAllRequests:
     '''
@@ -234,6 +428,7 @@ class VerifySignature:
         return await self.get_response(request)
     
     async def process_view(self, request, view_func, view_args, view_kwargs):
+        from .controller import fediverse_factory
         from .urls import app_name
         
         ## Whe check only views which have csrf_exempt because only those views
@@ -250,7 +445,24 @@ class VerifySignature:
             
             digest = digest.replace('SHA-256=', '').replace('sha-256=', '')
             
+            signature_string = request.headers.get('signature', None)
+            if not signature_string:
+                return self.response_error(request, 'Signature required')
+            
+            signature = self.parse_signature(signature_string)
+            
+            for k in ('keyId', 'headers', 'signature'):
+                if k not in signature:
+                    return self.response_error(request, f'Bad signature, {k} missing')
+            
+            if '(request-target)' not in signature['headers']:
+                return self.response_error(request, 'Signature requires request target.')
+            
+            if signature.get('algorithm', 'rsa-sha256') not in ('sha256', 'rsa-sha256'):
+                return self.response_error(request, 'Unsupported signature algorithm')
+            
             ## Checking digest
+            ## We validate it after above checks because those are faster
             body_digest = b64encode(sha256(request.body).digest()).decode('utf-8')
             if digest != body_digest:
                 return self.response_error(request, f'Bad digest, {digest} != {body_digest}')
@@ -273,3 +485,113 @@ class VerifySignature:
             }, status=403)
         else:
             raise PermissionDenied(message)
+    
+    @classmethod
+    def parse_signature(cls, sig_string: str) -> dict:
+        '''
+        Http signature parser.
+        sig_string: value from signature header like
+            Signature: keyId="https://example.social",algorithm="rsa-sha256",headers="(request-target) host date digest",signature="Y2FiYW...IxNGRiZDk4ZA=="
+        Returns dict
+        '''
+        kv_strings = [ x.strip() for x in sig_string.split(',') ]
+        signature = {}
+        for kvs in sig_string.split(','):
+            ## kvs is 'key="value"'
+            kv = kvs.strip().split('=', 1)
+            if len(kv) < 2:
+                kv.append('')
+            signature[kv[0]] = kv[1].strip(' "')
+        if 'headers' in signature:
+            headers = []
+            for h in signature['headers'].split(' '):
+                h = h.strip()
+                if h:
+                    headers.append(h)
+            signature['headers'] = headers
+        
+        return signature
+    
+    @classmethod
+    async def verify(cls, request, signature: str = ''):
+        '''
+        Verifies http signature.
+        request: Django HttpRequest object
+        signature: string from Signature http header. In case of empty will be taken from the request.
+        Returns True or raises an exception.
+        '''
+        from .controller import fediverse_factory
+        
+        if not signature:
+            signature = request.headers.get('signature', None)
+            if not signature:
+                raise BaseException('Signature required')
+            
+            signature = cls.parse_signature(signature)
+        
+        request_method = request.method.lower()
+        actor = None
+        fediverse = fediverse_factory(request)
+        actor = await fediverse.aget(signature['keyId'])
+        ## Commented out, just raise as is
+        # try:
+        #     actor = await fediverse.aget(signature['keyId'])
+        # except BaseException as e:
+        #     if settings.DEBUG:
+        #         ## Raise original exception (probably HTTPError)
+        #         raise e
+        #     else:
+        #         raise PermissionDenied(*e.args)
+        
+        if type(actor) is not dict:
+            raise BaseException(f'Actor verify failed: {type(actor)} {actor}')
+            # return self.response_error(request, f'Actor verify failed: {type(actor)} {actor}')
+        
+        actorKey = actor.get('publicKey', None)
+        if not actorKey:
+            raise BaseException(f'No public key found {signature["keyId"]}')
+            # return self.response_error(request, 'No actor public key.')
+        
+        if 'id' not in actorKey or actorKey['id'] != signature['keyId']:
+            raise BaseException(f'Actor key compare failed: {actorKey["id"]} vs {signature["keyId"]}')
+            # return self.response_error(request, 'Bad actor key ID')
+        
+        verify_errors = []
+        try_paths = []
+        if request.META.get('QUERY_STRING'):
+            try_paths.append(request.path + '?' + request.META.get('QUERY_STRING'))
+        try_paths.append(request.path)
+        
+        ## Trying to verify signature for path with query string and without
+        ## In the past path without query string was proper signature
+        ## but mastodon began to use query string for signatures at some time
+        for path in try_paths:
+            str2sign = []
+        
+            for h in signature['headers']:
+                if h == '(request-target)':
+                    v = f'{request_method} {path}'
+                else:
+                    v  = request.headers.get(h, '')
+                
+                str2sign.append(f'{h}: {v}')
+            
+            str2sign = '\n'.join(str2sign)
+            
+            try:
+                verifyResult = fediverse.crypt_verify(str2sign, signature['signature'], actorKey.get('publicKeyPem'))
+                if verifyResult is None:
+                    ## Signature check successful
+                    verify_errors.clear()
+                    break
+            except BaseException as e:
+                if not len(e.args):
+                    e.args = (str2sign, signature['signature'], actorKey.get('publicKeyPem'), request.META.get('HTTP_REMOTE_ADDR'), request.headers.get('user-agent'))
+                verify_errors.append(e)
+        
+        if len(verify_errors):
+            error_text = ', '.join(map(repr, verify_errors))
+            # return self.response_error(request, f'Signature verification failed: {error_text}')
+            raise BaseException(f'Signature verification failed: {error_text}')
+        
+        return True

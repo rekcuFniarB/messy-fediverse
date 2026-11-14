@@ -138,7 +138,7 @@ class TestSaveActivityPending(TestCase):
             },
             'published': '2024-01-01T00:00:00Z',
             '_verified': 'pending',
-            '_requestMeta': {
+            '_request_meta': {
                 'HTTP_SIGNATURE': 'keyId="test",headers="(request-target) digest",signature="sig"',
                 'QUERY_STRING': '',
             },
@@ -201,7 +201,7 @@ class TestWorkerVerifySignature(TestCase):
         activity.actor_uri = 'https://remote.com/users/remote'
         activity.activity_data = {
             '_verified': verified,
-            '_requestMeta': {
+            '_request_meta': {
                 'HTTP_SIGNATURE': (
                     'keyId="https://remote.com/users/remote#main-key",'
                     'headers="(request-target) digest",'

@@ -92,7 +92,7 @@ def get_request_user_id(request):
         return request.user.id
     return None
 
-def get_request_headers_dict(request: HttpRequest) -> dict[str, str]:
+def get_request_headers_dict(request: HttpRequest) -> Dict[str, str]:
     return {
         key: value
         for key, value in request.META.items()
@@ -118,7 +118,7 @@ class FrozenRequest:
     path: str
     body: str
     content_type: str
-    headers: dict[str, str] = field(default_factory=dict)
+    headers: Dict[str, str] = field(default_factory=dict)
     user_id: Optional[Any] = None
     site_id: Optional[Any] = None
     
@@ -165,12 +165,12 @@ class FrozenRequest:
             site_id=site_id,
         )
     
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> Dict[str, Any]:
         '''Returns a JSON-serializable dict.'''
         return asdict(self)
     
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "FrozenRequest":
+    def from_dict(cls, data: Dict[str, Any]) -> "FrozenRequest":
         '''Rebuilds the FrozenRequest wrapper from a dict.'''
         return cls(
             method=data.get('method', 'GET'),

@@ -37,6 +37,7 @@ setuptools.setup(
         'messy_fediverse.templates.messy.fediverse',
         'messy_fediverse.management.commands',
         'messy_fediverse.migrations',
+        'messy_fediverse.tests',
     ],
     package_data={
         '': ['*.conf', '*.md', '*.txt', '*.html', '*.js', '*.css', '*.json', '*.jsonld']

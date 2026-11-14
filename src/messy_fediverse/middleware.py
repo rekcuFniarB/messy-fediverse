@@ -14,7 +14,8 @@ import aiohttp
 from asgiref.sync import async_to_sync, sync_to_async
 from asgiref.sync import iscoroutinefunction, markcoroutinefunction
 from functools import wraps
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
+from typing import Any, Optional, Dict
 
 def stderrlog(*msg):
     if (
@@ -99,8 +100,6 @@ def get_request_headers_dict(request: HttpRequest) -> dict[str, str]:
         and isinstance(value, str)
     }
 
-from dataclasses import asdict, dataclass, field
-from typing import Any, Optional
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import AnonymousUser
 from django.http import HttpRequest

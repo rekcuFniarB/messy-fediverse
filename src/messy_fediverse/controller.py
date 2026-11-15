@@ -2253,36 +2253,11 @@ class Status(View):
         object_uri = f'{request.scheme}://{request.site.domain}{reversepath("status", rpath)}'
         data = {}
         fediverse = fediverse_factory(request)
-        activity = await sync_to_async(cache.get)(object_uri, None)
-        activityObject = None
-        
-        ## If not found in cache
-        ## If cached, it's new activity and may be not saved yet
-        ## while federating
-        if not activity or type(activity) is not dict:
-            activityObject = await Activity.get_note_activity(object_uri, fediverse)
-            if not activityObject:
-                if request.GET.get('from', '') == 'new_status':
-                    ## request.auser() was added in django 5.0
-                    request_user = await sync_to_async(lambda r: (bool(r.user), r.user)[1])(request)
-                    if request_user.is_authenticated:
-                        data['await'] = True
-                        ## Redirected from new post, may be not savet yet
-                        ## due to asyncronous mode, showing blank page
-                        ## and waiting for post to appear
-                        return render(request, template, data)
-                
-                filepath = fediverse.normalize_file_path(f'{request.path.strip("/")}.json')
-                
-                if not path.isfile(filepath):
-                    raise Http404(f'Status {rpath} not found.')
-                
-                with open(filepath, 'rt', encoding='utf-8') as f:
-                    activity = json.load(f)
-            else:
-                ## Got object from model
-                activity = activityObject.get_dict()
-        ## end if not activity
+        activityObject = await Activity.get_note_activity(object_uri, fediverse)
+        if activityObject:
+            activity = activityObject.get_dict()
+        else:
+            activity = await cache.aget(object_uri, None)
         
         if not activity or type(activity) is not dict:
             raise Http404(f'Activity for {object_uri} not found.')

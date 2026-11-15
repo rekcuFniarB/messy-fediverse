@@ -305,7 +305,7 @@ class Command(BaseCommand):
         if (
             '_requestAttempt' not in activity_dict
             or (
-                ## There are failed requests and not attempt done
+                ## There are failed requests and not all attempts done
                 activity_dict['_requestAttempt'] < 3
                 and len(activity_dict.get('_failedRequests', {}))
             )

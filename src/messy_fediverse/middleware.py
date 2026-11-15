@@ -183,7 +183,7 @@ class FrozenRequest:
             site_id=data.get('site_id')
         )
     
-    def to_request(self) -> HttpRequest:
+    def to_request(self) -> 'WSGIRequest':
         '''
         Reconstructs a synchronous WSGIRequest object.
         '''
@@ -214,19 +214,29 @@ class FrozenRequest:
 
         return request
     
-    async def ato_request(self) -> HttpRequest:
+    async def ato_request(self) -> 'ASGIRequest':
         '''
         Reconstructs an async ASGIRequest for async workers.
         '''
         factory = AsyncRequestFactory()
         User = get_user_model()
         
-        # Stripping 'HTTP_' so AsyncRequestFactory doesn't create HTTP_HTTP_*
-        # Excluding CONTENT_TYPE because it is passed explicitly below
+        ## Extracting the host cleanly so AsyncRequestFactory uses it as SERVER_NAME
+        ## instead of creating a duplicate 'testserver' host header
+        host = self.headers.get('HTTP_HOST', 'testserver.internal')
+        if ":" in host:
+            server_name, server_port = host.split(":", 1)
+        else:
+            server_name, server_port = host, ("443" if self.scheme == "https" else "80")
+        
+        factory.defaults['SERVER_NAME'] = server_name
+        
+        ## Stripping 'HTTP_' so AsyncRequestFactory doesn't create HTTP_HTTP_*
+        ## Excluding CONTENT_TYPE because it is passed explicitly below
         asgi_extra = {
-            (k[5:] if k.startswith('HTTP_') else k): v
+            (k[5:] if k.startswith("HTTP_") else k): v
             for k, v in self.headers.items()
-            if k != 'CONTENT_TYPE'
+            if k not in ('CONTENT_TYPE',)
         }
         
         request = factory.generic(
@@ -235,8 +245,14 @@ class FrozenRequest:
             data=self.body,
             content_type=self.content_type,
             secure=(self.scheme == 'https'),
+            SERVER_NAME=server_name,
+            # SERVER_PORT=server_port,
             **asgi_extra,
         )
+        
+        ## Otherwise request.headers.get('host') returns 'testserver'
+        ## with our hostname appended
+        request.META['HTTP_HOST'] = server_name
         
         # ASGIRequest in Django 4.1 reads request.scheme from self.scope['scheme']
         if hasattr(request, 'scope'):

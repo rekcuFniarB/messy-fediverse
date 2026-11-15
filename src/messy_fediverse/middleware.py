@@ -220,14 +220,22 @@ class FrozenRequest:
         '''
         factory = AsyncRequestFactory()
         User = get_user_model()
-
+        
+        # Stripping 'HTTP_' so AsyncRequestFactory doesn't create HTTP_HTTP_*
+        # Excluding CONTENT_TYPE because it is passed explicitly below
+        asgi_extra = {
+            (k[5:] if k.startswith('HTTP_') else k): v
+            for k, v in self.headers.items()
+            if k != 'CONTENT_TYPE'
+        }
+        
         request = factory.generic(
             method=self.method,
             path=self.path,
             data=self.body,
             content_type=self.content_type,
             secure=(self.scheme == 'https'),
-            **self.headers,
+            **asgi_extra,
         )
         
         # ASGIRequest in Django 4.1 reads request.scheme from self.scope['scheme']

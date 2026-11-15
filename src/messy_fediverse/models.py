@@ -113,6 +113,29 @@ class Activity(models.Model):
                 or FediverseActor.uniqid()
             )
     
+    def get_absolute_url(self):
+        from .urls import reverse
+        from urllib.parse import urlencode
+        
+        if (self.activity_data and self.activity_data.get('object')
+            and type(self.activity_data['object']) is dict
+            and self.activity_data['object'].get('type')
+            and self.activity_data['object'].get('id')):
+        
+            if self.incoming:
+                if not self.in_reply_to_uri and self.context:
+                    return reverse('outbox') + '?' + urlencode({'thread': self.context})
+                else:
+                    return reverse('interact') + '?' + urlencode({'acct': self.activity_data['object']['id']})
+            else:
+                if self.activity_data['object']['type'] == 'Note':
+                    return self.activity_data['object']['id']
+        
+        if self.object_uri:
+            return reverse('interact') + '?' + urlencode({'acct': self.object_uri})
+        else:
+            return reverse('interact') + '?' + urlencode({'acct': self.uri})
+    
     def get_dict(self):
         '''
         Get activity dict.

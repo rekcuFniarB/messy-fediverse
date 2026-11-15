@@ -126,25 +126,8 @@ def update_url(url: str, params: dict = {}) -> str:
     return updated_url
 
 def reverse(name, args=None, kwargs=None):
-    '''
-    Django's url reverse wrapper
-    '''
-    ## Lazy imports to avoid circular import issues
-    if 'app_name' not in __cache__:
-        from .urls import app_name
-        __cache__['app_name'] = app_name
-    if 'reverse' not in __cache__:
-        from django.urls import reverse
-        __cache__['reverse'] = reverse
-    
-    if type(kwargs) is dict and 'rpath' in kwargs:
-        kwargs['rpath'] = kwargs['rpath'].strip('/')
-    
-    result =  __cache__['reverse'](f"{__cache__['app_name']}:{name}", args=args, kwargs=kwargs)
-    if result and result.endswith('//'):
-        result = result.rstrip('/') + '/'
-    
-    return result
+    from .urls import reverse
+    return reverse(name, args, kwargs)
 
 def reversepath(name, path):
     '''

@@ -1,6 +1,6 @@
 from django.urls import path
 #from django.urls import include
-
+from django.urls import reverse as d_reverse
 from . import  controller
 
 app_name = 'messy-fediverse'
@@ -28,3 +28,16 @@ urlpatterns = [
     path('replies<path:rpath>', controller.Replies.as_view(), name='replies_slashed_url'),
     path('<path:rpath>/', controller.dumb, name='dumb')
 ]
+
+def reverse(name, args=None, kwargs=None):
+    '''
+    Django's url reverse wrapper
+    '''
+    if type(kwargs) is dict and 'rpath' in kwargs:
+        kwargs['rpath'] = kwargs['rpath'].strip('/')
+    
+    result =  d_reverse(f'{app_name}:{name}', args=args, kwargs=kwargs)
+    if result and result.endswith('//'):
+        result = result.rstrip('/') + '/'
+    
+    return result

@@ -149,6 +149,7 @@ class Command(BaseCommand):
                 activity_dict = activity.get_dict()
                 if '_request_meta' in activity_dict and type(activity_dict['_request_meta']) is dict:
                     original_request = await FrozenRequest.from_dict(activity_dict['_request_meta']).ato_request()
+                    original_request.worker_pid = self._pid
                 else:
                     ## Fallback but probably will fail due to request.get_host()
                     original_request = self._request

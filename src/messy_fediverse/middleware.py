@@ -240,10 +240,13 @@ class FrozenRequest:
             if k not in ('CONTENT_TYPE',)
         }
         
+        ## Otherwise content_type will be empty
+        body = self.body or 'null'
+        
         request = factory.generic(
             method=self.method,
             path=self.path,
-            data=self.body,
+            data=body,
             content_type=self.content_type,
             secure=(self.scheme == 'https'),
             SERVER_NAME=server_name,

@@ -146,6 +146,13 @@ class Command(BaseCommand):
                     self.style.SUCCESS(f"DEBUG: Processing: #{activity.pk} {activity}")
                 )
                 
+                activity_dict = activity.get_dict()
+                if '_request_meta' in activity_dict and type(activity_dict['_request_meta']) is dict:
+                    original_request = await FrozenRequest.from_dict(activity_dict['_request_meta']).ato_request()
+                else:
+                    ## Fallback but probably will fail due to request.get_host()
+                    original_request = self._request
+                
                 ## If is outgoing
                 if not activity.incoming:
                     try:
@@ -168,11 +175,8 @@ class Command(BaseCommand):
                 
                 ## Is incoming activity and pending request
                 if activity.incoming and activity.activity_type == 'PRQ':
-                    activity_dict = activity.get_dict()
                     ## If pending signature verification
                     if not activity_dict.get('_verified') or activity_dict.get('_verified') == 'pending':
-                        original_request = await FrozenRequest.from_dict(activity_dict.get('_request_meta')).ato_request()
-                        
                         try:
                             verified = await VerifySignature.verify(original_request)
                         except BaseException as e:
@@ -184,7 +188,7 @@ class Command(BaseCommand):
                         if verified:
                             activity.activity_data['_verified'] = 'signature'
                             # activity.activity_type = activity_dict.get('_originalActivityType', '')
-                            activity_dict['type'] = activity.activity_type
+                            activity_dict['type'] = activity_dict.get('_originalActivityType', '')
                             ## Postprocess
                             await save_activity(original_request, activity_dict)
                         else:
@@ -193,7 +197,7 @@ class Command(BaseCommand):
                             await sync_to_async(activity.save)()
                 
                 try:
-                    result = await Replies.fetch_parents(self._request, activity.object_uri)
+                    result = await Replies.fetch_parents(original_request, activity.object_uri)
                     if (
                         type(result) is dict
                         and 'root' in result

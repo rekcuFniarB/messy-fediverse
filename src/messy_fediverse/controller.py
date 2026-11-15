@@ -463,8 +463,15 @@ async def save_activity(request, activity_dict):
     
     actor_urlp = urlparse(activity_dict.get('actor', None))
     actor_domain = actor_urlp.hostname
-    our_domain = request.get_host()
+    our_domain = request.headers.get('host')
     our_domain = urlparse(f'//{our_domain}').hostname or ''
+    
+    ## Comparing activity actor uri to ours
+    # if activity_dict.get('actor', None) == fediverse.id:
+    if actor_domain and actor_domain == our_domain:
+        ## Is outgoing
+        incoming = False
+    
     if '_request_meta' not in activity_dict:
         from .middleware import FrozenRequest
         activity_dict['_request_meta'] = (await FrozenRequest.from_request(request)).to_dict()
@@ -472,12 +479,6 @@ async def save_activity(request, activity_dict):
     if not isinstance(activity_dict.get("_processing_ts"), list):
         activity_dict["_processing_ts"] = []
     activity_dict["_processing_ts"].append([worker_pid, ts_now])
-    
-    ## Comparing activity actor uri to ours
-    # if activity_dict.get('actor', None) == fediverse.id:
-    if actor_domain and actor_domain == our_domain:
-        ## Is outgoing
-        incoming = False
     
     activity = await Activity.objects.filter(uri=activity_uri).afirst()
     ## Creating new activity if not exists yet.

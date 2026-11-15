@@ -387,7 +387,6 @@ async def save_activity(request, activity_dict):
     activity = None
     apobject = activity_dict.get('object', {})
     activity_uri = activity_dict.get('id', None)
-    incoming = True
     creating = False
     activity_id = 0
     created_id = 0
@@ -452,13 +451,8 @@ async def save_activity(request, activity_dict):
     our_domain = request.headers.get('host')
     our_domain = urlparse(f'//{our_domain}').hostname or ''
     
-    ## Comparing activity actor uri to ours
-    # if activity_dict.get('actor', None) == fediverse.id:
-    if actor_domain and actor_domain == our_domain:
-        ## Is outgoing
-        incoming = False
-    
-    if '_request_meta' not in activity_dict:
+    ## Is live request
+    if not worker_pid:
         from .middleware import FrozenRequest
         activity_dict['_request_meta'] = (await FrozenRequest.from_request(request)).to_dict()
     
@@ -469,12 +463,20 @@ async def save_activity(request, activity_dict):
     activity = await Activity.objects.filter(uri=activity_uri).afirst()
     ## Creating new activity if not exists yet.
     if not activity:
+        incoming = True
+        ## Comparing activity actor uri to ours
+        if ('_request_meta' in activity_dict
+            and activity_dict['_request_meta'].get('user_id')
+            and actor_domain and actor_domain == our_domain):
+            ## Is outgoing
+            incoming = False
+        
         activity = Activity(
             uri=activity_uri,
             ## PRQ is initial pending request,
             ## then worker will set to actulal activity_type_id
             ## restored from _originalActivityType
-            activity_type=('PRQ' if not worker_pid else activity_type_id),
+            activity_type=('PRQ' if incoming and not worker_pid else activity_type_id),
             actor_uri=activity_dict.get('actor', '') or '',
             object_uri=object_uri,
             context=context,
@@ -498,7 +500,7 @@ async def save_activity(request, activity_dict):
         
         fediverse = fediverse_factory(request)
         
-        if not activity_dict.get('_actor_info') and activity.actor_uri:
+        if not activity_dict.get('_actor_info') and activity.incoming and activity.actor_uri:
             ## We cache actor info in place so that
             ## we don't request it again when displaying.
             actorInfo = await fediverse.aget(activity.actor_uri)
@@ -631,6 +633,7 @@ async def save_activity(request, activity_dict):
                 await followers.aupdate(disabled=True, accepted=False)
     
     if (activity_type in ('Create', 'Announce', 'Like', 'Block', 'Undo')
+        and activity.incoming
         ## ignore fetched by us
         and 'ts=' not in activity_uri and 'activity=' not in activity_uri):
         await email_notice(request, activity_dict)

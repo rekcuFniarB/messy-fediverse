@@ -150,7 +150,8 @@ class FrozenRequest:
         
         user_id = await get_request_user_id(request)
         site_id = await sync_to_async(cls.get_request_site_id)(request)
-        body = ''
+        ## Any value is requred otherwise content_type will be empty
+        body = 'null'
         if save_body:
             body = request.body.decode('utf-8', errors='ignore')
         

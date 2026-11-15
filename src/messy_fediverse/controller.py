@@ -420,29 +420,32 @@ async def save_activity(request, activity_dict):
         object_uri = str(apobject)
         apobject = {}
     
-    actType = None
-    act_type = activity_dict.get('type', apobject.get('type', ''))
+    activity_type_id = None
+    activity_type = activity_dict.get('type', apobject.get('type', ''))
     
+    ## Saving original activity type. We temporarily set it to
+    ## 'pending' until bg worker verifies signature,
+    ## then it restores activity type from this value.
     if not activity_dict.get('_originalActivityType'):
-        activity_dict['_originalActivityType'] = act_type
+        activity_dict['_originalActivityType'] = activity_type
     
     for def_type in Activity.TYPES:
-        if act_type == def_type[1]:
-            actType = def_type[0]
+        if activity_type == def_type[1]:
+            activity_type_id = def_type[0]
     
-    if not actType or not activity_uri:
+    if not activity_type_id or not activity_uri:
         ## Wrong activity
         return None
     
-    if act_type == 'Delete' and '/users/' in object_uri:
+    if activity_type == 'Delete' and '/users/' in object_uri:
         ## Ignoring users deletion, not implemented yet.
         ## We don't store 3rd party users anyway
         return None
     
     context = (
         apobject.get('context')
-        or apobject.get('conversation')
         or activity_dict.get('context')
+        or apobject.get('conversation')
         or activity_dict.get('conversation')
         or apobject.get('inReplyTo')
         or activity_dict.get('inReplyTo')
@@ -451,7 +454,7 @@ async def save_activity(request, activity_dict):
     )
     
     published = ''
-    if actType == 'UPD' and 'updated' in apobject:
+    if activity_type_id == 'UPD' and 'updated' in apobject:
         published = apobject['updated']
     
     published = (
@@ -485,7 +488,10 @@ async def save_activity(request, activity_dict):
     if not activity:
         activity = Activity(
             uri=activity_uri,
-            activity_type='PRQ', ## is initial pending request, then worker will set to actType,
+            ## PRQ is initial pending request,
+            ## then worker will set to actulal activity_type_id
+            ## restored from _originalActivityType
+            activity_type=('PRQ' if not worker_pid else activity_type_id),
             actor_uri=activity_dict.get('actor', '') or '',
             object_uri=object_uri,
             context=context,
@@ -505,7 +511,7 @@ async def save_activity(request, activity_dict):
     )
     
     if worker_pid:
-        activity.activity_type = actType
+        activity.activity_type = activity_type_id
         
         fediverse = fediverse_factory(request)
         
@@ -565,7 +571,7 @@ async def save_activity(request, activity_dict):
         ## and call this function again to complete processing.
         return activity
     
-    if actType == 'UPD':
+    if activity_type_id == 'UPD':
         ## If activity updates other activity,
         ## we mark old activities for this object_uri.
         await Activity.objects.filter(
@@ -576,7 +582,7 @@ async def save_activity(request, activity_dict):
         ).aupdate(updated_by_activity_uri=activity_uri)
     
     ## If activity type is 'create' or 'update'
-    if actType in ('UPD', 'CRE') and published:
+    if activity_type_id in ('UPD', 'CRE') and published:
         ## Updating thread last acitivity timestamp
         await Activity.objects.filter(
             context=context,
@@ -593,7 +599,7 @@ async def save_activity(request, activity_dict):
         fediverse = fediverse_factory(request)
         
         ## If follow activity received
-        if actType == 'FOL':
+        if activity_type_id == 'FOL':
             ## If follow request
             follower = await Follower.objects.filter(uri=activity.actor_uri, object_uri=object_uri).afirst()
             endpoint_url = None
@@ -633,13 +639,18 @@ async def save_activity(request, activity_dict):
                 await asyncio.gather(*tasks)
         ## endif 'FOL' (follow request)
         
-        elif actType == 'UND':
+        elif activity_type_id == 'UND':
             if (apobject.get('type', None) == 'Follow' and 'object' in apobject and
                 apobject['object'] and type(apobject['object']) is str and
                 'actor' in apobject and apobject['actor'] and type(apobject['actor']) is str):
                 ## if unfollow request
                 followers = Follower.objects.filter(uri=apobject['actor'], object_uri=apobject['object'])
                 await followers.aupdate(disabled=True, accepted=False)
+    
+    if (activity_type in ('Create', 'Announce', 'Like', 'Block', 'Undo')
+        ## ignore fetched by us
+        and 'ts=' not in activity_uri and 'activity=' not in activity_uri):
+        await email_notice(request, activity_dict)
     
     return activity
 
@@ -1096,10 +1107,18 @@ class Replies(View):
                 if type(activity_obj) is not dict:
                     stderrlog('WARNING', 'Bad activity', activity_dict)
                     continue
+                ## FIXME skip saving if is already stored and context does not
+                ## requre fixing.
+                if (activity
+                    and activity_obj.get('context')
+                    == activity_dict.get('context')
+                    == activity.context == context):
+                    ## Skipping, already saved and does not require context fixing.
+                    continue
+                
+                ## Forcing root object context.
                 activity_obj['context'] = context
-                activity_obj['conversation'] = context
                 activity_dict['context'] = context
-                activity_dict['conversation'] = context
                 
                 activity = await save_activity(request, activity_dict)
                 

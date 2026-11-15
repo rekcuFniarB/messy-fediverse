@@ -146,6 +146,7 @@ class Command(BaseCommand):
                 self.stderr.write(
                     self.style.SUCCESS(f"DEBUG: Processing: #{activity.pk} {activity}")
                 )
+                self.stderr.flush()
                 
                 activity_dict = activity.get_dict()
                 if '_request_meta' in activity_dict and type(activity_dict['_request_meta']) is dict:
@@ -197,6 +198,8 @@ class Command(BaseCommand):
                             activity.activity_type = 'INV'
                             activity.activity_data['_verified'] = 'fail'
                             await sync_to_async(activity.save)()
+                
+                self.stderr.flush()
                 
                 try:
                     result = await Replies.fetch_parents(original_request, activity.object_uri)

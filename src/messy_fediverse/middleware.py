@@ -23,6 +23,7 @@ def stderrlog(*msg):
         or settings.DEBUG
         or 'error' in msg or 'ERROR' in msg
         or 'warning' in msg or 'WARNING' in msg
+        or 'LOG' in msg
     ):
         print(*msg, file=sys.stderr, flush=True)
 
@@ -230,29 +231,25 @@ class FrozenRequest:
         else:
             server_name, server_port = host, ("443" if self.scheme == "https" else "80")
         
-        factory.defaults['SERVER_NAME'] = server_name
+        # factory.defaults['SERVER_NAME'] = server_name
         
-        ## Stripping 'HTTP_' so AsyncRequestFactory doesn't create HTTP_HTTP_*
-        ## Excluding CONTENT_TYPE because it is passed explicitly below
-        asgi_extra = {
-            (k[5:] if k.startswith("HTTP_") else k): v
-            for k, v in self.headers.items()
-            if k not in ('CONTENT_TYPE',)
-        }
-        
-        ## Otherwise content_type will be empty
-        body = self.body or 'null'
-        
-        request = factory.generic(
-            method=self.method,
-            path=self.path,
-            data=body,
-            content_type=self.content_type,
-            secure=(self.scheme == 'https'),
-            SERVER_NAME=server_name,
-            # SERVER_PORT=server_port,
-            **asgi_extra,
-        )
+        request = factory.generic(**{
+            **{
+                (k[5:] if k.lower().startswith('http_') else k): v
+                for k, v in self.headers.items()
+                if k.lower() not in (
+                    'content_type', 'content_length',
+                    'http_content_type', 'http_content_length',
+                    'server_name', 'http_server_name'
+                )
+            },
+            'method': self.method,
+            'path': self.path,
+            ## Otherwise content_type will be empty
+            'data': self.body or 'null',
+            'content_type': self.content_type,
+            'secure': (self.scheme == 'https'),
+        })
         
         ## Otherwise request.headers.get('host') returns 'testserver'
         ## with our hostname appended
@@ -260,7 +257,7 @@ class FrozenRequest:
         
         # ASGIRequest in Django 4.1 reads request.scheme from self.scope['scheme']
         if hasattr(request, 'scope'):
-            request.scope["scheme"] = self.scheme
+            request.scope['scheme'] = self.scheme
         
         if self.user_id is not None:
             request.user = await User.objects.aget(id=self.user_id)

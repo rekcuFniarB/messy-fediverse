@@ -12,6 +12,7 @@ from time import sleep
 from datetime import datetime
 import os
 from urllib.parse import urlparse
+import traceback
 # import tracemalloc
 
 class Command(BaseCommand):
@@ -227,7 +228,11 @@ class Command(BaseCommand):
                         await sync_to_async(close_old_connections)()
                         continue
                     else:
-                        raise
+                        # raise
+                        trace_text = traceback.format_exc()
+                        self.stderr.write(
+                            self.style.ERROR(f"TRACE: \n{trace_text}")
+                        )
                 
                 is_done = True
                 

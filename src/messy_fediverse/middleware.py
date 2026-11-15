@@ -249,6 +249,11 @@ class FrozenRequest:
             'data': self.body or 'null',
             'content_type': self.content_type,
             'secure': (self.scheme == 'https'),
+            ## We stripped the body but we lose original content length,
+            ## which is calculated by this factory on its own.
+            ## So, we store original value here so that we can
+            ## reuse it later, for example in signature verification.
+            'x_original_content_length': self.headers.get('CONTENT_LENGTH', 0),
         })
         
         ## Otherwise request.headers.get('host') returns 'testserver'
@@ -596,7 +601,11 @@ class VerifySignature:
                 if h == '(request-target)':
                     v = f'{request_method} {path}'
                 else:
-                    v  = request.headers.get(h, '')
+                    ## Some headers we store with x-original- prefix,
+                    ## at least content-lenght, because we process it
+                    ## in background worker and original body is stripped
+                    ## to save space.
+                    v  = request.headers.get(f'x-original-{h}', '') or request.headers.get(h, '')
                 
                 str2sign.append(f'{h}: {v}')
             

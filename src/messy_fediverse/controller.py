@@ -1500,6 +1500,15 @@ class Followers(OrderedItemsView):
         # stderrlog('SELF ITEMS:', self.items, data)
         await sync_to_async(prefetch_related_objects)(self.items, 'activity')
         
+        for i in self.items:
+            activity_dict = i.activity.get_dict()
+            if not activity_dict.get('authorInfo'):
+                activity_dict['authorInfo'] = activity_dict.get('_actor_info', {})
+            if type(activity_dict['authorInfo']) is dict:
+                activity_dict['authorInfo']['webfinger'] = (
+                    activity_dict['authorInfo'].get('webfinger') or activity_dict['authorInfo'].get('user@host')
+                )
+        
         data['model_meta'] = self.model._meta
         data['items'] = self.items
         
@@ -1525,15 +1534,15 @@ class Blockers(OrderedItemsView):
     
     def set_filter(self, request, *args, **kwargs):
         fediverseUser = fediverse_factory(request)
-        self.query_filter = {
-            'activity_type': 'BLK',
-            'disabled': False,
-            'object_uri': fediverseUser.id,
+        self.query_filter = Q(
             ~Exists(self.model.objects.filter(
                 activity_type='UND',
                 object_uri=OuterRef('uri')
             )),
-        }
+            activity_type='BLK',
+            disabled=False,
+            object_uri=fediverseUser.id,
+        )
         return self.query_filter
     
     async def postprocess(self, request, data):
@@ -1553,8 +1562,12 @@ class Blockers(OrderedItemsView):
                 activity_dict['authorInfo'] = activity_dict.get('_actor_info', {})
             if type(activity_dict['authorInfo']) is dict:
                 activity_dict['authorInfo']['webfinger'] = (
-                    activity_dict['authorInfo']['webfinger'] or activity_dict['authorInfo'].get('user@host')
+                    activity_dict['authorInfo'].get('webfinger') or activity_dict['authorInfo'].get('user@host')
                 )
+            
+            ## Fix for followers template which we reuse here
+            if not hasattr(i, 'activity'):
+                i.activity = i
         
         data['model_meta'] = self.model._meta
         data['items'] = self.items

@@ -1,7 +1,7 @@
 {% extends 'messy/fediverse/base.html' %}
 {% load admin_urls %}
 
-{% block title %}{{ block.super }} Followers{% endblock title %}
+{% block title %}{{ block.super }} {{ pageTitle }}{% endblock title %}
 
 {% block pagetype %}<div class="messy-fediverse-page-followers"></div>{% endblock %}
 
@@ -10,7 +10,7 @@
     class="section-metadata"
     data-path="{{ request.path }}">
 {
-    "title": "Followers",
+    "title": "{{ pageTitle }}",
     "pageClass": "messy-fediverse-page-followers"
 }
 </script>
@@ -23,28 +23,27 @@
     {% for item in items %}
         <li>{% spaceless %}
             <p>
-                <time>{{ item.activity.ts|date }}</time>
-                <a href="{% url 'messy-fediverse:interact' %}?acct={{ item.uri|urlencode }}">
-                    {% with authorInfo=item.activity.activity_data.authorInfo %}
-                        {% if authorInfo %}
-                            {{ authorInfo.webfinger|default:authorInfo.url|default:item.uri }}
-                        {% else %}
-                            {{ item.uri }}
-                        {% endif %}
-                    {% endwith %}
-                </a>
+                <time style="display: inline-block; min-width: 8em;">{{ item.activity.ts|date }}</time>
+                
+                {% if user_is_staff %}
+                    <a href="{% url model_meta|admin_urlname:'change' item.id %}"
+                        data-no-ajax>🅰️</a>
+                {% endif %}
+                
                 {% if item.activity.activity_data.authorInfo.url %}
                     <a href="{{ item.activity.activity_data.authorInfo.url }}"
                         target="_blank" rel="noopener">↗️</a>
+                {% elif item.activity.actor_uri %}
+                    <a href="{{ item.activity.actor_uri }}"
+                        target="_blank" rel="noopener">↗️</a>
                 {% endif %}
+                
+                <a href="{% url 'messy-fediverse:interact' %}?acct={{ item.uri|urlencode }}">
+                    {% with authorInfo=item.activity.activity_data.authorInfo %}
+                        {% firstof authorInfo.webfinger authorInfo.url item.activity.actor_uri item.uri %}
+                    {% endwith %}
+                </a>
             </p>
-            
-            {% if user_is_staff %}
-                <section>
-                    <a href="{% url model_meta|admin_urlname:'change' item.id %}"
-                        class="btn btn-warning" data-no-ajax>Admin edit</a>
-                </section>
-            {% endif %}
         {% endspaceless %}</li>
     {% endfor %}
     </ul>

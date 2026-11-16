@@ -231,90 +231,97 @@ async def email_notice(request, activity):
         return False
 
 def fediverse_factory(request):
-    if 'fediverse' not in __cache__:
-        headers = {
-            'Referer': f'{request.scheme}://{request.site.domain}/',
-            'Content-Type': 'application/activity+json',
-            'User-Agent': f'Messy Fediverse (+{request.scheme}://{request.site.domain})',
-            # 'Accept': 'application/activity+json, application/ld+json; profile="https://www.w3.org/ns/activitystreams", application/json'
-            ## Lemmy responds with html for header above
-            'Accept': 'application/activity+json'
-        }
-        
-        user = {
-            "@context": [
-                "https://www.w3.org/ns/activitystreams",
-                #"https://w3id.org/security/v1",
-                staticurl(request, 'messy/fediverse/litepub.json'),
-                #'https://litepub.social/litepub/litepub-v0.1.jsonld',
-                # 'https://dweb.link/ipfs/QmUt2rFamEsBxSkUd7DwE7SXr5BVxTQviGMH6Hwj9bKzTE/litepub-0.1.jsonld',
-                #f"{request.scheme}://{request.site.domain}/schemas/litepub-0.1.jsonld",
-                {
-                    "@language": "und"
-                }
-            ],
-            "published": "1970-01-01T00:00:00Z",
-            "alsoKnownAs": [],
-            "attachment": [],
-            "capabilities": {
-                "acceptsChatMessages": False
-            },
-            "discoverable": False,
-            "endpoints": {
-                #"oauthAuthorizationEndpoint": f"{request.scheme}://{request.site.domain}{reverse('auth')}",
-                #"oauthRegistrationEndpoint": f"{request.scheme}://{request.site.domain}/social/api/apps/",
-                "oauthTokenEndpoint": f"{request.scheme}://{request.site.domain}{reverse('auth-token')}",
-                "sharedInbox": f"{request.scheme}://{request.site.domain}{reverse('inbox')}?shared=y",
-                #"uploadMedia": f"{request.scheme}://{request.site.domain}/social/upload_media/"
-            },
-            "featured": f"{request.scheme}://{request.site.domain}{reverse('featured')}",
-            #"featured": {
-            #    "type":"OrderedCollection",
-            #    "totalItems":0,
-            #    "orderedItems":[]
-            #},
-            "followers": f"{request.scheme}://{request.site.domain}{reverse('followers')}",
-            "following": f"{request.scheme}://{request.site.domain}{reverse('following')}",
-            "id": f"{request.scheme}://{request.site.domain}{reverse('root')}",
-            "inbox": f"{request.scheme}://{request.site.domain}{reverse('inbox')}?direct=y",
-            "manuallyApprovesFollowers": True,
-            "name": settings.MESSY_FEDIVERSE.get('DISPLAY_NAME', f"{request.site.domain}"),
-            "outbox": f"{request.scheme}://{request.site.domain}{reverse('outbox')}",
-            "preferredUsername": settings.MESSY_FEDIVERSE.get('USERNAME', f"{request.site.domain}"),
-            "publicKey": {
-                "id": f"{request.scheme}://{request.site.domain}{reverse('root')}#main-key",
-                "owner": f"{request.scheme}://{request.site.domain}{reverse('root')}",
-                "publicKeyPem": settings.MESSY_FEDIVERSE['PUBKEY']
-            },
-            "summary": "",
-            "tag": [],
-            "type": "Person",
-            "url": settings.MESSY_FEDIVERSE.get('HOME', f"{request.scheme}://{request.site.domain}{reverse('root')}")
-        }
-        
-        ## If url defined without hostname
-        userUrl = urlparse(user['url'])
-        if not userUrl.netloc:
-            user['url'] = userUrl._replace(scheme=request.scheme, netloc=request.site.domain).geturl()
-        
-        
-        for k in settings.MESSY_FEDIVERSE:
-            if k != k.upper():
-                user[k] = settings.MESSY_FEDIVERSE[k]
-        
-        __cache__['fediverse'] = FediverseActor(
-            cache=cache,
-            headers=headers,
-            user=user,
-            privkey=settings.MESSY_FEDIVERSE['PRIVKEY'],
-            pubkey=settings.MESSY_FEDIVERSE['PUBKEY'],
-            datadir=settings.MESSY_FEDIVERSE.get('DATADIR', settings.MEDIA_ROOT),
-            debug=settings.DEBUG or settings.MESSY_FEDIVERSE.get('DEBUG', False)
-        )
+    '''
+    Makes FediverseActor instance. Cached per request.
+    request: Django request object.
+    Returns FediverseActor instance.
+    '''
+    if hasattr(request, '_fediverse_actor'):
+        return request._fediverse_actor
     
-    __cache__['fediverse'].federated_endpoints = FederatedEndpoint.objects.filter(disabled=False)
+    headers = {
+        'Referer': f'{request.scheme}://{request.site.domain}/',
+        'Content-Type': 'application/activity+json',
+        'User-Agent': f'Messy Fediverse (+{request.scheme}://{request.site.domain})',
+        # 'Accept': 'application/activity+json, application/ld+json; profile="https://www.w3.org/ns/activitystreams", application/json'
+        ## Lemmy responds with html for header above
+        'Accept': 'application/activity+json'
+    }
     
-    return __cache__['fediverse']
+    user = {
+        "@context": [
+            "https://www.w3.org/ns/activitystreams",
+            #"https://w3id.org/security/v1",
+            staticurl(request, 'messy/fediverse/litepub.json'),
+            #'https://litepub.social/litepub/litepub-v0.1.jsonld',
+            # 'https://dweb.link/ipfs/QmUt2rFamEsBxSkUd7DwE7SXr5BVxTQviGMH6Hwj9bKzTE/litepub-0.1.jsonld',
+            #f"{request.scheme}://{request.site.domain}/schemas/litepub-0.1.jsonld",
+            {
+                "@language": "und"
+            }
+        ],
+        "published": "1970-01-01T00:00:00Z",
+        "alsoKnownAs": [],
+        "attachment": [],
+        "capabilities": {
+            "acceptsChatMessages": False
+        },
+        "discoverable": False,
+        "endpoints": {
+            #"oauthAuthorizationEndpoint": f"{request.scheme}://{request.site.domain}{reverse('auth')}",
+            #"oauthRegistrationEndpoint": f"{request.scheme}://{request.site.domain}/social/api/apps/",
+            "oauthTokenEndpoint": f"{request.scheme}://{request.site.domain}{reverse('auth-token')}",
+            "sharedInbox": f"{request.scheme}://{request.site.domain}{reverse('inbox')}?shared=y",
+            #"uploadMedia": f"{request.scheme}://{request.site.domain}/social/upload_media/"
+        },
+        "featured": f"{request.scheme}://{request.site.domain}{reverse('featured')}",
+        #"featured": {
+        #    "type":"OrderedCollection",
+        #    "totalItems":0,
+        #    "orderedItems":[]
+        #},
+        "followers": f"{request.scheme}://{request.site.domain}{reverse('followers')}",
+        "following": f"{request.scheme}://{request.site.domain}{reverse('following')}",
+        "id": f"{request.scheme}://{request.site.domain}{reverse('root')}",
+        "inbox": f"{request.scheme}://{request.site.domain}{reverse('inbox')}?direct=y",
+        "manuallyApprovesFollowers": True,
+        "name": settings.MESSY_FEDIVERSE.get('DISPLAY_NAME', f"{request.site.domain}"),
+        "outbox": f"{request.scheme}://{request.site.domain}{reverse('outbox')}",
+        "preferredUsername": settings.MESSY_FEDIVERSE.get('USERNAME', f"{request.site.domain}"),
+        "publicKey": {
+            "id": f"{request.scheme}://{request.site.domain}{reverse('root')}#main-key",
+            "owner": f"{request.scheme}://{request.site.domain}{reverse('root')}",
+            "publicKeyPem": settings.MESSY_FEDIVERSE['PUBKEY']
+        },
+        "summary": "",
+        "tag": [],
+        "type": "Person",
+        "url": settings.MESSY_FEDIVERSE.get('HOME', f"{request.scheme}://{request.site.domain}{reverse('root')}")
+    }
+    
+    ## If url defined without hostname
+    userUrl = urlparse(user['url'])
+    if not userUrl.netloc:
+        user['url'] = userUrl._replace(scheme=request.scheme, netloc=request.site.domain).geturl()
+    
+    
+    for k in settings.MESSY_FEDIVERSE:
+        if k != k.upper():
+            user[k] = settings.MESSY_FEDIVERSE[k]
+    
+    request._fediverse_actor = FediverseActor(
+        cache=cache,
+        headers=headers,
+        user=user,
+        privkey=settings.MESSY_FEDIVERSE['PRIVKEY'],
+        pubkey=settings.MESSY_FEDIVERSE['PUBKEY'],
+        datadir=settings.MESSY_FEDIVERSE.get('DATADIR', settings.MEDIA_ROOT),
+        debug=settings.DEBUG or settings.MESSY_FEDIVERSE.get('DEBUG', False)
+    )
+    
+    request._fediverse_actor.federated_endpoints = FederatedEndpoint.objects.filter(disabled=False)
+    
+    return request._fediverse_actor
 
 #@csrf_exempt
 async def main(request):

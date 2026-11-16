@@ -19,7 +19,6 @@ class Command(BaseCommand):
     help = 'Worker process'
     _done = False
     _request = None
-    _actor = None
     _pid = 0
     _limit = 100
     
@@ -73,9 +72,6 @@ class Command(BaseCommand):
         self._request = request_factory.get('/social/interact/', secure=True)
         self._request.worker_pid = self._pid
         self._request.site = site
-        ## FIXME for multiuser instance actor should
-        ## be different.
-        self._actor = fediverse_factory(self._request)
         
         return asyncio.run(self.ahandle(**options))
     
@@ -159,7 +155,7 @@ class Command(BaseCommand):
                 ## If is outgoing
                 if not activity.incoming:
                     try:
-                        result = await self.federate(self._request, self._actor, activity)
+                        result = await self.federate(original_request, activity)
                         self.stderr.write(
                             self.style.SUCCESS(f"DEBUG: Federated activity: {result}")
                         )
@@ -271,10 +267,9 @@ class Command(BaseCommand):
             
             await asyncio.sleep((options['sleep'] or 1) + 1)
     
-    async def federate(self, request, actor, activity):
+    async def federate(self, request, activity):
         '''Federate job function.
         request: django request object.
-        actor: fediverse.FediverseActor instance.
         activity: models.Activity instance.# activity.disabled = False
         '''
         now = datetime.now()
@@ -290,6 +285,7 @@ class Command(BaseCommand):
             )
             return None
         
+        actor = fediverse_factory(request)
         activity_dict = await actor.prepare_activity(activity_dict)
         activity_dict = await actor.federate(activity_dict)
         return await save_activity(request, activity_dict, 'worker.federate')

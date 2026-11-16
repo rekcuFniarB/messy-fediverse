@@ -502,6 +502,10 @@ async def save_activity(request, activity_dict, caller=''):
             ## we don't request it again when displaying.
             actorInfo = await get_actor_info(request, activity_dict)
     
+    if activity.incoming:
+        ## Useles data, no need to store
+        activity_dict.pop('@context', None)
+    
     ## If updating, context might not known during presave yet,
     ## in some cases we update context in fetch_parents()
     ## by finding root activity.

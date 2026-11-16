@@ -191,22 +191,11 @@ async def email_notice(request, activity):
         summary = ap_object.get('summary', None)
         if summary:
             subj_parts.append(summary)
-        attributedTo = ap_object.get('attributedTo', None)
-        if attributedTo:
-            if '_actor_info' not in activity:
-                activity['_actor_info'] = {}
-                try:
-                    activity['_actor_info'] = await fediverse.aget(attributedTo)
-                except:
-                    pass
-            
-            if '_actor_info' in activity and type(activity['_actor_info']) is dict:
-                if 'preferredUsername' in activity['_actor_info'] and not activity['_actor_info'].get('user@host', None):
-                    activity['_actor_info']['user@host'] = ''
-                    author_url = urlparse(activity['_actor_info']['id'])
-                    activity['_actor_info']['user@host'] = f'{activity["_actor_info"]["preferredUsername"]}@{author_url.netloc}'
-                subj_parts.append('by')
-                subj_parts.append(activity['_actor_info'].get('user@host', ''))
+        
+        await get_actor_info(request, activity)
+        if '_actor_info' in activity and 'webfinger' in activity['_actor_info']:
+            subj_parts.append('by')
+            subj_parts.append(activity['_actor_info']['webfinger'])
         
         content = ap_object.get('content', '')
         
@@ -501,12 +490,10 @@ async def save_activity(request, activity_dict, caller=''):
         
         fediverse = fediverse_factory(request)
         
-        if not activity_dict.get('_actor_info') and activity.incoming and activity.actor_uri:
+        if not activity_dict.get('_actor_info') and activity.incoming:
             ## We cache actor info in place so that
             ## we don't request it again when displaying.
-            actorInfo = await fediverse.aget(activity.actor_uri)
-            if type(actorInfo) is dict:
-                activity_dict['_actor_info'] = actorInfo
+            actorInfo = await get_actor_info(request, activity_dict)
     
     ## If updating, context might not known during presave yet,
     ## in some cases we update context in fetch_parents()
@@ -641,6 +628,32 @@ async def save_activity(request, activity_dict, caller=''):
     
     return activity
 
+async def get_actor_info(request, activity_dict: dict) -> dict:
+    if '_actor_info' in activity_dict and type(activity_dict['_actor_info']) is dict:
+        return activity_dict['_actor_info']
+    
+    attributed_to = activity_dict.get('actor')
+    ap_object = activity_dict.get('object')
+    if type(ap_object) is dict and ap_object.get('attributedTo', None):
+        attributed_to = ap_object.get('attributedTo', None)
+    
+    if attributed_to:
+        activity_dict['_actor_info'] = {}
+        try:
+            fediverse = fediverse_factory(request)
+            activity_dict['_actor_info'] = await fediverse.aget(attributed_to)
+        except:
+            pass
+        
+        if '_actor_info' in activity_dict and type(activity_dict['_actor_info']) is dict:
+            if 'preferredUsername' in activity_dict['_actor_info'] and not activity_dict['_actor_info'].get('user@host', None):
+                activity_dict['_actor_info']['user@host'] = ''
+                author_url = urlparse(activity_dict['_actor_info']['id'])
+                activity_dict['_actor_info']['user@host'] = f'{activity_dict["_actor_info"]["preferredUsername"]}@{author_url.netloc}'
+                if 'webfinger' not in activity_dict['_actor_info']:
+                    activity_dict['_actor_info']['webfinger'] = activity_dict['_actor_info']['user@host']
+    
+    return activity_dict.get('_actor_info')
 
 async def send_accept_follow(request, follower):
     fediverse = fediverse_factory(request)

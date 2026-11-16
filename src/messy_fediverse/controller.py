@@ -104,7 +104,7 @@ async def postprocess_tasks(sender, **kwargs):
         activities = await asyncio.gather(*tasks)
         save_results = []
         for n, activity in enumerate(activities):
-            save_results.append(save_activity(requests_tasks[n][0], activity))
+            save_results.append(save_activity(requests_tasks[n][0], activity, 'postprocess_tasks'))
         save_results = await asyncio.gather(*save_results)
         return save_results
 
@@ -374,11 +374,12 @@ auth.csrf_exempt = True
 outbox.csrf_exempt = True
 main.csrf_exempt = True
 
-async def save_activity(request, activity_dict):
+async def save_activity(request, activity_dict, caller=''):
     '''
     Saving activity.
     request: django HttpRequest instance
     activity_dict: dict
+    caller: string, mostly for debugging
     '''
     if type(activity_dict) is not dict or not activity_dict.get('id') or not activity_dict.get('type'):
         stderrlog('ERROR', 'Bad activity to save', activity_dict)
@@ -458,7 +459,7 @@ async def save_activity(request, activity_dict):
     
     if not isinstance(activity_dict.get("_processing_ts"), list):
         activity_dict["_processing_ts"] = []
-    activity_dict["_processing_ts"].append([worker_pid, ts_now])
+    activity_dict["_processing_ts"].append([worker_pid, ts_now, caller])
     
     activity = await Activity.objects.filter(uri=activity_uri).afirst()
     ## Creating new activity if not exists yet.
@@ -680,7 +681,7 @@ async def send_accept_follow(request, follower):
     )
     acceptActivity['_response'] = response
     ## Saving outgoing too
-    acceptActivity = await save_activity(request, acceptActivity)
+    acceptActivity = await save_activity(request, acceptActivity, 'send_accept_follow')
     
     return acceptActivity
 
@@ -1106,7 +1107,7 @@ class Replies(View):
                 activity_obj['context'] = context
                 activity_dict['context'] = context
                 
-                activity = await save_activity(request, activity_dict)
+                activity = await save_activity(request, activity_dict, 'Replies.fetch_parents')
                 
                 if activity:
                     stderrlog('DEBUG', 'Saved activity',
@@ -1144,7 +1145,7 @@ class Inbox(View):
             data = json.loads(request.body)
             
             should_log_request = False
-            saveResult = await save_activity(request, data)
+            saveResult = await save_activity(request, data, 'Inbox.post')
             
             if 'type' in data and data['type'] == 'Delete':
                 should_log_request = False
@@ -2346,7 +2347,7 @@ class Status(View):
         
         ## FIXME should also send requests to mentioned instances
         activity = await fediverse.new_delete_activity(activity)
-        await save_activity(request, activity)
+        await save_activity(request, activity, 'Status.delete')
         
         # return redirect(reversepath('status', rpath))
         return JsonResponse({'alert': f'Delete activity sent.', 'activity': activity, 'success': True});
@@ -2366,7 +2367,7 @@ class Status(View):
         
         ## FIXME should also send requests to mentioned instances
         activity = await fediverse.new_undelete_activity(activity)
-        await save_activity(request, activity)
+        await save_activity(request, activity, 'Status.patch')
         
         # return redirect(reversepath('status', rpath))
         return JsonResponse({'alert': f'Undelete activity sent.', 'activity': activity});
@@ -2572,7 +2573,7 @@ class Interact(View):
             if data['activity']:
                 ## Presave. Will also be saved after
                 ## activity is federated
-                await save_activity(request, data['activity'])
+                await save_activity(request, data['activity'], 'Interact.post')
                 
                 if (
                     data['activity'].get('type') not in ('Create', 'Update', 'Delete')

@@ -197,7 +197,7 @@ class Command(BaseCommand):
                             # activity.activity_type = activity_dict.get('_originalActivityType', '')
                             activity_dict['type'] = activity_dict.get('_originalActivityType', '')
                             ## Postprocess
-                            await save_activity(original_request, activity_dict)
+                            await save_activity(original_request, activity_dict, 'worker.verified')
                         else:
                             activity.activity_type = 'INV'
                             activity.activity_data['_verified'] = 'fail'
@@ -292,7 +292,7 @@ class Command(BaseCommand):
         
         activity_dict = await actor.prepare_activity(activity_dict)
         activity_dict = await actor.federate(activity_dict)
-        return await save_activity(request, activity_dict)
+        return await save_activity(request, activity_dict, 'worker.federate')
     
     @staticmethod
     def isSqlLostException(exception):

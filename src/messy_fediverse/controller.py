@@ -1094,9 +1094,10 @@ class Replies(View):
                 if type(activity_obj) is not dict:
                     stderrlog('WARNING', 'Bad activity', activity_dict)
                     continue
-                ## FIXME skip saving if is already stored and context does not
-                ## requre fixing.
-                if (activity
+                
+                if (
+                    ## If was already saved and processed
+                    '_processing_ts' in activity_dict
                     and activity_obj.get('context')
                     == activity_dict.get('context')
                     == activity.context == context):

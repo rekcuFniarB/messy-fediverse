@@ -657,8 +657,11 @@ async def get_actor_info(request, activity_dict: dict) -> dict:
                 activity_dict['_actor_info']['user@host'] = ''
                 author_url = urlparse(activity_dict['_actor_info']['id'])
                 activity_dict['_actor_info']['user@host'] = f'{activity_dict["_actor_info"]["preferredUsername"]}@{author_url.netloc}'
-                if 'webfinger' not in activity_dict['_actor_info']:
-                    activity_dict['_actor_info']['webfinger'] = activity_dict['_actor_info']['user@host']
+            if ('webfinger' not in activity_dict['_actor_info']
+                or type(activity_dict['_actor_info']['webfinger']) is not str
+                or '@' not in activity_dict['_actor_info']['webfinger']):
+                ## Actually looks like webfinger propertin in the profile is new mastodon feature.
+                activity_dict['_actor_info']['webfinger'] = activity_dict['_actor_info'].get('user@host')
             
             ## Making dict smaller
             activity_dict['_actor_info'].pop('@context', None)
@@ -1011,8 +1014,11 @@ class Replies(View):
         >>> result = asyncio.run(Replies.get_root_post(request, 'https://example.com/object/'))
         '''
         
-        ids = []
+        ## List of all activity dicts, fetched from network or db.
         activities = []
+        ## Dict of activities which found in DB
+        ## and don't require fetching. Keys are activity uris.
+        activities_found = {}
         
         if not request:
             ## For test
@@ -1054,6 +1060,7 @@ class Replies(View):
                 activity_dict = activity.get_dict()
                 if type(activity_dict) is dict:
                     ap_object = activity_dict.get('object')
+                activities_found[activity.uri] = activity
             else:
                 ## Was not saved yet
                 if not actor:
@@ -1119,11 +1126,12 @@ class Replies(View):
                     continue
                 
                 if (
-                    ## If was already saved and processed
-                    '_processing_ts' in activity_dict
+                    ## If was found in DB
+                    activity_dict['id'] in activities_found
                     and activity_obj.get('context')
                     == activity_dict.get('context')
-                    == activity.context == context):
+                    == activities_found[activity_dict['id']].context
+                    == context):
                     ## Skipping, already saved and does not require context fixing.
                     continue
                 

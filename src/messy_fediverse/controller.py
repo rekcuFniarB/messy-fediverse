@@ -659,6 +659,9 @@ async def get_actor_info(request, activity_dict: dict) -> dict:
                 activity_dict['_actor_info']['user@host'] = f'{activity_dict["_actor_info"]["preferredUsername"]}@{author_url.netloc}'
                 if 'webfinger' not in activity_dict['_actor_info']:
                     activity_dict['_actor_info']['webfinger'] = activity_dict['_actor_info']['user@host']
+            
+            ## Making dict smaller
+            activity_dict['_actor_info'].pop('@context', None)
     
     return activity_dict.get('_actor_info')
 

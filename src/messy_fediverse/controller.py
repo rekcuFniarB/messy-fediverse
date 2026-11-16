@@ -1214,6 +1214,7 @@ class OrderedItemsView(View):
     _page_params = None
     pageTitle = ''
     pageClass = ''
+    pageDescription = ''
     ## Will contain items from model
     items = []
     ## If should count total items for html output
@@ -1410,6 +1411,7 @@ class OrderedItemsView(View):
         
         data['pageTitle'] = self.pageTitle
         data['pageClass'] = self.pageClass
+        data['pageDescription'] = self.pageDescription
         
         return render(request, self.template, data)
     
@@ -1475,6 +1477,8 @@ class Followers(OrderedItemsView):
     select = ('uri',)
     template = 'messy/fediverse/followers.html'
     countTotal = True
+    pageTitle = 'Followers'
+    pageDescription = 'People who follow you.'
     
     def set_filter(self, request, *args, **kwargs):
         fediverseUser = fediverse_factory(request)
@@ -1495,6 +1499,62 @@ class Followers(OrderedItemsView):
         data['user_is_authenticated'] = await request_user_is_authenticated(request)
         # stderrlog('SELF ITEMS:', self.items, data)
         await sync_to_async(prefetch_related_objects)(self.items, 'activity')
+        
+        data['model_meta'] = self.model._meta
+        data['items'] = self.items
+        
+        return data
+    
+    async def allowed(self):
+        '''Who is allowed to see this data'''
+        if is_json_request(self.request):
+            return True
+        
+        if await request_user_is_authenticated(self.request):
+            return True
+        
+        return False
+
+class Blockers(OrderedItemsView):
+    model = Activity
+    select = ('uri',)
+    template = 'messy/fediverse/followers.html'
+    countTotal = True
+    pageTitle  = 'Blockers'
+    pageDescription = 'People who block you.'
+    
+    def set_filter(self, request, *args, **kwargs):
+        fediverseUser = fediverse_factory(request)
+        self.query_filter = {
+            'activity_type': 'BLK',
+            'disabled': False,
+            'object_uri': fediverseUser.id,
+            ~Exists(self.model.objects.filter(
+                activity_type='UND',
+                object_uri=OuterRef('uri')
+            )),
+        }
+        return self.query_filter
+    
+    async def postprocess(self, request, data):
+        '''Postprocess for tempaltes.'''
+        
+        if is_json_request(request):
+            return data
+        
+        data['user_is_staff'] = await request_user_is_staff(request)
+        data['user_is_authenticated'] = await request_user_is_authenticated(request)
+        # stderrlog('SELF ITEMS:', self.items, data)
+        # await sync_to_async(prefetch_related_objects)(self.items, 'activity')
+        
+        for i in self.items:
+            activity_dict = i.get_dict()
+            if not activity_dict.get('authorInfo'):
+                activity_dict['authorInfo'] = activity_dict.get('_actor_info', {})
+            if type(activity_dict['authorInfo']) is dict:
+                activity_dict['authorInfo']['webfinger'] = (
+                    activity_dict['authorInfo']['webfinger'] or activity_dict['authorInfo'].get('user@host')
+                )
         
         data['model_meta'] = self.model._meta
         data['items'] = self.items

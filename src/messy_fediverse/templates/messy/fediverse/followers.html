@@ -16,8 +16,8 @@
 </script>
 
 <div id="messy-fediverse-followers" class="messy-fediverse">
-    <h2>{{ totalItems }} followers</h2>
-    <p><small>People who follow you.</small></p>
+    <h2>{{ totalItems }} {{ pageTitle }}</h2>
+    <p><small>{{ pageDescription }}</small></p>
     
     <ul>
     {% for item in items %}

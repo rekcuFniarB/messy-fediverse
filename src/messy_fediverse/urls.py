@@ -19,6 +19,7 @@ urlpatterns = [
     path('misc/', controller.MiscPageView.as_view(), name='misc-page'),
     path('followers/', controller.Followers.as_view(), name='followers'),
     path('following/', controller.Following.as_view(), name='following'),
+    path('assholes/', controller.Blockers.as_view(), name='blockers')
     path('lists/', controller.ListsIndex.as_view(), name='lists'),
     path('lists/<int:tag_id>/', controller.TagView.as_view(), name='list'),
     path('lists/<int:tag_id>/delete/', controller.TagDelete.as_view(), name='list-delete'),

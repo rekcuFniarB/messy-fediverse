@@ -128,7 +128,7 @@ class Command(BaseCommand):
                 target_ids = (
                     Activity.objects
                         .filter(processing_status=0, pk__gte=last_id)
-                        .order_by('-pk')
+                        .order_by('pk')
                         .values_list('pk', flat=True)[:self._limit]
                 )
                 target_ids = [pk async for pk in target_ids]
@@ -174,7 +174,11 @@ class Command(BaseCommand):
                             await sync_to_async(close_old_connections)()
                             continue
                         else:
-                            raise
+                            # raise
+                            trace_text = traceback.format_exc()
+                            self.stderr.write(
+                                self.style.ERROR(f"TRACE: \n{trace_text}")
+                            )
                 
                 ## Is incoming activity and pending request
                 if activity.incoming and activity.activity_type == 'PRQ':
@@ -202,6 +206,7 @@ class Command(BaseCommand):
                 self.stderr.flush()
                 
                 try:
+                    ## Thread fetcher to be moved into separate worker
                     result = await Replies.fetch_parents(original_request, activity.object_uri)
                     if (
                         type(result) is dict

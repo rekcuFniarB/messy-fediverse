@@ -1117,6 +1117,13 @@ class Replies(View):
                 stderrlog('ERROR', 'Bad root activity', root)
                 return False
             
+            ## FIXME if root post was not able to fetch
+            ## or we got thombstone or user banned us,
+            ## we get wrong context (using ID instead of actual context)
+            ## and all messages in the thread are forced
+            ## that wrong context string.
+            ## In this case we need a fallback, maybe
+            ## just use any context from the thread.
             context = (
                 root_obj.get('context')
                 or root_obj.get('conversation')
@@ -1133,7 +1140,9 @@ class Replies(View):
                     ## If was found in DB
                     activity_dict['id'] in activities_found
                     and activity_obj.get('context')
-                    == activity_dict.get('context')
+                    ## Recent mastodon versions don't store context in the activity,
+                    ## just in object.
+                    # == activity_dict.get('context')
                     == activities_found[activity_dict['id']].context
                     == context):
                     ## Skipping, already saved and does not require context fixing.

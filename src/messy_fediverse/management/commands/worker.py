@@ -77,18 +77,10 @@ class Command(BaseCommand):
     
     async def ahandle(self, *args, **options):
         last_id = 0
-        cycles = 0
         found = False
         
         while not self._done:
             result = None
-            
-            if found:
-                cycles += 1
-                # if cycles > self._limit * 10:
-                #     cycles = 0
-                #     ## Forcing last_id recheck
-                #     last_id = 0
             
             if options['uri']:
                 ## No infinite loop in this case
@@ -132,34 +124,27 @@ class Command(BaseCommand):
                         .values_list('pk', flat=True)[:self._limit]
                 )
                 target_ids = [pk async for pk in target_ids]
-                
-                if not len(target_ids):
-                    await asyncio.sleep((options['sleep'] or 1) + 1)
-                    continue
-                
-                last_id = min(target_ids)
-                self.stderr.write(
-                    self.style.SUCCESS(f"INFO: scanning tasks from {last_id}")
-                )
-                last_id = max(1, last_id - self._limit * 10)
-                
                 await (
                     Activity.objects
                         .filter(processing_status=0, pk__in=target_ids)
                         .aupdate(processing_status=self._pid)
                 )
+                
+                ## Picking tasks for processing
                 qs = (
                     Activity.objects
                         .filter(
                             processing_status=self._pid,
-                            pk__in=target_ids
+                            pk__gte=last_id
                         )
                         .order_by('pk')
                 )
             
+            processed_ids = []
             found = False
             async for activity in qs:
                 found = True
+                processed_ids.append(activity.id)
                 
                 self.stderr.write(
                     self.style.SUCCESS(f"DEBUG: Processing: #{activity.pk} {activity}")
@@ -286,6 +271,13 @@ class Command(BaseCommand):
                 
                 if options['sleep']:
                     await asyncio.sleep(options['sleep'])
+            
+            if len(processed_ids):
+                last_id = min(processed_ids)
+                self.stderr.write(
+                    self.style.SUCCESS(f"INFO: done tasks number {len(processed_ids)} from {last_id} to {max(processed_ids)}")
+                )
+                last_id = max(1, last_id - self._limit * 10)
             
             await asyncio.sleep((options['sleep'] or 1) + 1)
     

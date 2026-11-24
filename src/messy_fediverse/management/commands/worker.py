@@ -85,10 +85,10 @@ class Command(BaseCommand):
             
             if found:
                 cycles += 1
-                if cycles > self._limit * 10:
-                    cycles = 0
-                    ## Forcing last_id recheck
-                    last_id = 0
+                # if cycles > self._limit * 10:
+                #     cycles = 0
+                #     ## Forcing last_id recheck
+                #     last_id = 0
             
             if options['uri']:
                 ## No infinite loop in this case
@@ -104,6 +104,10 @@ class Command(BaseCommand):
                 ## so that we don't scan the whole table
                 ## on every cycle.
                 if not last_id:
+                    self.stderr.write(
+                        self.style.SUCCESS(f"INFO: Starting the worker...")
+                    )
+                    
                     last_id = (
                         await Activity.objects
                             .filter(processing_status=0)
@@ -118,7 +122,7 @@ class Command(BaseCommand):
                             .values_list('pk', flat=True)
                             .afirst() or 0
                         )
-                    last_id = max(1, last_id - self._limit * 5)
+                    last_id = max(1, last_id - self._limit * 10)
                 
                 ## Marking these items for processing
                 target_ids = (
@@ -128,12 +132,30 @@ class Command(BaseCommand):
                         .values_list('pk', flat=True)[:self._limit]
                 )
                 target_ids = [pk async for pk in target_ids]
+                
+                if not len(target_ids):
+                    await asyncio.sleep((options['sleep'] or 1) + 1)
+                    continue
+                
+                last_id = min(target_ids)
+                self.stderr.write(
+                    self.style.SUCCESS(f"INFO: scanning tasks from {last_id}")
+                )
+                last_id = max(1, last_id - self._limit * 10)
+                
                 await (
                     Activity.objects
                         .filter(processing_status=0, pk__in=target_ids)
                         .aupdate(processing_status=self._pid)
                 )
-                qs = Activity.objects.filter(processing_status=self._pid).order_by('pk')
+                qs = (
+                    Activity.objects
+                        .filter(
+                            processing_status=self._pid,
+                            pk__in=target_ids
+                        )
+                        .order_by('pk')
+                )
             
             found = False
             async for activity in qs:

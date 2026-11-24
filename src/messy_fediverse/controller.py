@@ -35,6 +35,7 @@ from .middleware import (
     request_user_is_authenticated, is_json_request, is_post_json,
     request_is_ajax,
 )
+import hashlib
 # from functools import partial
 # from pprint import pprint
 import traceback
@@ -1346,12 +1347,13 @@ class OrderedItemsView(View):
         ## Getting total count
         get_sql_str = sync_to_async(lambda q: str(q.query))
         sql_str = await get_sql_str(qs)
-        cache_key = f'count-{id(sql_str)}'
+        query_hash = hashlib.md5(sql_str.encode('utf-8')).hexdigest()
+        cache_key = f'count-{query_hash}'
         totalCount = await cache.aget(cache_key)
-        if not totalCount:
+        if totalCount is None:
             if is_json_request(self.request) or self.countTotal:
                 totalCount = await qs.acount()
-                await cache.aset(totalCount, 60 * 60 * 24)
+                await cache.aset(cache_key, totalCount, 60 * 60 * 24)
             else:
                 ## Not used on html pages
                 totalCount = -1
@@ -1391,6 +1393,7 @@ class OrderedItemsView(View):
         ## Applying limit
         qs = qs[0:self.limit+1]
         qs.totalCount = totalCount
+        qs.query_hash = query_hash
         qs.prev_page = qs_prev_page
         
         return qs

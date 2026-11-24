@@ -30,12 +30,12 @@ def stderrlog(*msg):
 def remove_private_properties(data):
     if isinstance(data, dict):
         return {
-            k: remove_private_keys_recursive(v)
+            k: remove_private_properties(v)
             for k, v in data.items()
             if not (isinstance(k, str) and k.startswith("_"))
         }
     if isinstance(data, list):
-        return [remove_private_keys_recursive(item) for item in data]
+        return [remove_private_properties(item) for item in data]
     return data
 
 def is_same_site_referer(request):

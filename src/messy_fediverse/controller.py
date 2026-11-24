@@ -1443,6 +1443,11 @@ class OrderedItemsView(View):
                 ## Usually it's just an URI.
                 if len(_item) == 1:
                     _item = tuple(_item.values())[0]
+                
+                if type(_item) is dict and is_json_request(request):
+                    from .middleware import remove_private_properties
+                    _item = remove_private_properties(_item)
+                
                 data['orderedItems'].append(_item)
             
             if len(data['orderedItems']) > self.limit:

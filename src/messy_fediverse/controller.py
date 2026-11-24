@@ -391,6 +391,7 @@ async def save_activity(request, activity_dict, caller=''):
     worker_pid = getattr(request, 'worker_pid', 0)
     ts_now = datetime.now().timestamp()
     actorInfo = None
+    saving_allowed = True
     
     if type(apobject) is dict:
         object_uri = apobject.get('id', '')
@@ -505,7 +506,14 @@ async def save_activity(request, activity_dict, caller=''):
     if activity.incoming:
         ## Useles data, no need to store
         activity_dict.pop('@context', None)
-    
+    else:
+        if caller == 'Replies.fetch_parents' and creating:
+            ## Probably we fetched a virtual activity
+            ## created by middleware, not allowing
+            ## to create it, otherwise it will be federated
+            ## via worker.
+            saving_allowed = False
+        
     ## If updating, context might not known during presave yet,
     ## in some cases we update context in fetch_parents()
     ## by finding root activity.
@@ -517,38 +525,39 @@ async def save_activity(request, activity_dict, caller=''):
     if '_response' in activity_dict:
         activity.processing_status = 20
     
-    try:
-        await sync_to_async(activity.save)()
-        activity_id = activity.pk
-        if creating:
-            created_id = activity_id
-    
-    except BaseException as e:
-        trace_msg = traceback.format_exc()
+    if saving_allowed:
+        try:
+            await sync_to_async(activity.save)()
+            activity_id = activity.pk
+            if creating:
+                created_id = activity_id
         
-        message=f'''<pre><code>{trace_msg}</code></pre><br>
-            <br>
-            <h2>Activity:</h2>
-            <pre><code>{json.dumps(activity_dict, indent=4)}</code></pre>
+        except BaseException as e:
+            trace_msg = traceback.format_exc()
             
-            <h2>Request debug info:</h2>
-            <pre><code>
-            GET: {request.META['QUERY_STRING']}
+            message=f'''<pre><code>{trace_msg}</code></pre><br>
+                <br>
+                <h2>Activity:</h2>
+                <pre><code>{json.dumps(activity_dict, indent=4)}</code></pre>
+                
+                <h2>Request debug info:</h2>
+                <pre><code>
+                GET: {request.META['QUERY_STRING']}
+                
+                POST: {request.POST.__str__()}
+                
+                META: {request.META.__str__()}
+                
+                BODY: {request.body.decode('utf-8', 'replace')}
+                </code></pre>
+            '''
             
-            POST: {request.POST.__str__()}
-            
-            META: {request.META.__str__()}
-            
-            BODY: {request.body.decode('utf-8', 'replace')}
-            </code></pre>
-        '''
-        
-        await sync_to_async(mail_admins)(
-            subject=f'ERROR: failed to save activity: {e}',
-            fail_silently=not settings.DEBUG,
-            message=strip_tags(message),
-            html_message=message
-        )
+            await sync_to_async(mail_admins)(
+                subject=f'ERROR: failed to save activity: {e}',
+                fail_silently=not settings.DEBUG,
+                message=strip_tags(message),
+                html_message=message
+            )
     
     if not worker_pid:
         ## Exiting here, background worker will validate signature
@@ -634,7 +643,7 @@ async def save_activity(request, activity_dict, caller=''):
     if (activity_type in ('Create', 'Announce', 'Like', 'Block', 'Undo')
         and activity.incoming
         ## ignore fetched by us
-        and 'ts=' not in activity_uri and 'activity=' not in activity_uri):
+        and caller != 'Replies.fetch_parents'):
         await email_notice(request, activity_dict)
     
     return activity

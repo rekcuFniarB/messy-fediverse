@@ -24,6 +24,7 @@ from cryptography.hazmat.primitives import hashes as crypt_hashes
 from cryptography.hazmat.primitives.asymmetric import padding as crypt_padding
 from cryptography.hazmat.primitives.serialization import load_pem_public_key as crypt_load_pem_public_key
 from cryptography.hazmat.primitives import serialization as crypt_serialization
+from zlib import crc32
 
 class FediverseActor:
     __tasks__ = set()
@@ -539,7 +540,7 @@ class FediverseActor:
         initial.update(kwargs)
         activity['_initial'] = initial
         
-        reply_to_obj = initial.get('replyToObj')
+        reply_to_obj = initial.get('_reply_to_obj')
         activity_obj = activity.get('object')
         
         if type(activity_obj) is dict:
@@ -772,6 +773,7 @@ class FediverseActor:
         
         if 'object' in activity and type(activity['object']) is dict:
             object_uri = activity['object'].get('id')
+            object_type = activity['object'].get('type', 'none')
             ## Using some values from object
             for k in ('to', 'cc', 'directMessage', 'context', 'conversation'):
                 if k in activity['object'] and k not in activity_upd:
@@ -784,29 +786,37 @@ class FediverseActor:
                 activity['object'] = activity['object'].get('id')
         else:
             object_uri = activity.get('object', '')
+            object_type = 'uri'
         
         if not activity.get('id'):
             if object_uri:
                 activity_uri = object_uri
-                activity_id = f'activity={uniqid}&ts={now.timestamp()}'
-                if '?' in activity_uri:
-                    activity_uri = activity_uri.replace('?', f'?{activity_id}&', 1)
-                else:
-                    activity_uri = f'{activity_uri}?{activity_id}'
+                activity_actor = activity.get('actor')
+                if activity_actor and not activity_uri.startswith(activity_actor):
+                    activity_uri = activity_actor
             else:
-                activity_uri = path.join(self.id, 'activity', datepath, uniqid, '')
+                activity_uri = self.id
+            
+            activity_type = activity.get('type', 'none')
+            object_id = f'{crc32(object_uri.encode()):08x}'
+            activity_id = f'activity={activity_type}.{object_type}.{object_id}&ts={now.timestamp()}&id={uniqid}'
+            
+            if '?' in activity_uri:
+                activity_uri = activity_uri.replace('?', f'?{activity_id}&', 1)
+            else:
+                activity_uri = f'{activity_uri}?{activity_id}'
             
             activity['id'] = activity_uri
         
         return activity
     
-    def new_interact_activity(self, replyToObj=None, activity_type='Create', **kwargs):
+    def new_interact_activity(self, _reply_to_obj=None, activity_type='Create', **kwargs):
         '''
         Create new status.
         content: string message text
         summary: string subject (optional)
         url: string custom url (optional)
-        replyToObj: dict AP object if new status is a reply to (optional)
+        _reply_to_obj: dict AP object if new status is a reply to (optional)
         tags: string, space separated list of tags (hashtags or users to mention)
         '''
         
@@ -842,7 +852,7 @@ class FediverseActor:
             #"conversation": "tag:mastodon.ml,2022-05-21:objectId=9633346:objectType=Conversation",
             data['context'] = data['conversation'] = data['id']
         else:
-            data.update(replyToObj or {})
+            data.update(_reply_to_obj or {})
             if activity_type == 'Update':
                 data.update({
                     'url': kwargs.get('url') or data.get('url') or data.get('id'),
@@ -863,25 +873,25 @@ class FediverseActor:
             data['contentMap'][kwargs['language']] = data.get('content', '')
         
         ## If we are replying to some status
-        ## replyToObj also may be our object which we are updating
-        if type(replyToObj) is dict and activity_type != 'Update':
+        ## _reply_to_obj also may be our object which we are updating
+        if type(_reply_to_obj) is dict and activity_type != 'Update':
             ## Use context of source if exists
             context = (
-                replyToObj.get('context')
-                or replyToObj.get('conversation')
-                or replyToObj.get('id')
+                _reply_to_obj.get('context')
+                or _reply_to_obj.get('conversation')
+                or _reply_to_obj.get('id')
             )
             data['context'] = context
             data['conversation'] = context
             ## Not all engines use context though, for example Misskey not.
             
-            data['inReplyTo'] = replyToObj.get('id')
-            data['directMessage'] = replyToObj.get('directMessage', False)
+            data['inReplyTo'] = _reply_to_obj.get('id')
+            data['directMessage'] = _reply_to_obj.get('directMessage', False)
         
         ## Storing initial args to be reused by background worker
         _initial = kwargs
         _initial.update({
-           'replyToObj':  replyToObj,
+           '_reply_to_obj':  _reply_to_obj,
            'activity_type': activity_type,
         })
         

@@ -2700,7 +2700,7 @@ class Interact(View):
             
             data['activity'] = fediverse.new_interact_activity(
                 activity_type=activity_type,
-                replyToObj=ap_object,
+                _reply_to_obj=ap_object,
                 **form.cleaned_data,
             )
             

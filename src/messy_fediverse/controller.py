@@ -1265,6 +1265,7 @@ class OrderedItemsView(View):
     query_filter = {}
     limit = 10
     order = 'desc'
+    order_by = 'pk'
     select = []
     _page_params = None
     pageTitle = ''
@@ -1273,7 +1274,11 @@ class OrderedItemsView(View):
     ## Will contain items from model
     items = []
     ## If should count total items for html output
-    countTotal = False
+    count_total = None
+    apply_new_pagination = False
+    pagination_values = ['*']
+    ## used to avoid full table scan
+    table_scan_limit = 0
     
     @classmethod
     async def object_to_dict(cls, obj, fields=[]):
@@ -1324,7 +1329,126 @@ class OrderedItemsView(View):
     def encode_params(data: dict) -> str:
         return xorcrypt(json.dumps(data))
     
-    def set_filter(self, *args, **kwargs):
+    @classmethod
+    async def apply_pagination(cls, qs, page=0, limit=10, order='desc',
+        key='pk', count=False, values=None, scan_limit=0):
+        '''
+        Constructs pagination for queryset.
+        qs: Django query set.
+        page: page number, int
+        limit: items on page, int
+        order: 'desc' or 'asc'
+        key: property which is used for pagination, default is 'pk'
+        count: if should count total, bool
+        values: if empty, returns ids only. If ['*'], returns full object. If contains list of properties, only those properties are returned.
+        scan_limit: disallow full table scan, limits to number of rows to search.
+        returns queryset with page_prev_key, page_next_key, page_items properties.
+        '''
+        prev_key = None
+        qs_base = qs.all()
+        qs = qs.order_by(f"-{key}" if order == "desc" else key)
+        
+        if page:
+            ## Pagination
+            ## (1235, "This version of MariaDB doesn't yet support 'LIMIT & IN/ALL/ANY/SOME subquery'")
+            # qs_prev_page_sub = (qs.all()
+            #     .filter(pk__gt=page)
+            #     .order_by('pk')[:self.limit]
+            # )
+            # qs_prev_page = (qs.all()
+            #     .filter(pk__in=qs_prev_page_sub)
+            #     .order_by('pk')
+            # )
+            
+            if order == 'desc':
+                qs_prev_page = (qs.all()
+                    .filter(**{f'{key}__gt': page})
+                    .order_by(key)
+                )
+                qs = qs.filter(**{f'{key}__lte': page})
+                if scan_limit:
+                    qs = qs.filter(**{f'{key}__gte': max(0, page - scan_limit)})
+            else:
+                qs_prev_page = (qs.all()
+                    .filter(**{f'{key}__lt': page})
+                    .order_by(f'-{key}')
+                )
+                qs = qs.filter(**{f'{key}__gte': page})
+                if scan_limit:
+                    qs = qs.filter(**{f'{key}__lte': page + scan_limit})
+            
+            prev_key = await qs_prev_page.values_list(key, flat=True)[limit-1:limit].afirst()
+        ## No page number supplied
+        else:
+            if scan_limit:
+                if order != 'desc':
+                    ## if asc
+                    qs = qs.filter(**{f'{key}__lte': scan_limit})
+                else:
+                    ## if desc
+                    key_max = await qs_base.all().values_list(key, flat=True).order_by(f'-{key}').afirst()
+                    if key_max and key_max > scan_limit:
+                        qs = qs.filter(**{f'{key}__gte': key_max - scan_limit})
+        
+        key_only = False
+        if values and '*' in values:
+            ## Retrieving full itms
+            qs.page_items = [item async for item in qs.all()[:limit + 1]]
+        elif values:
+            ## Retrieving particular properties only
+            if key not in values:
+                values.append(key)
+            qs.page_items = [
+                item async for item in qs.only(*values)[:limit + 1]
+            ]
+        else:
+            ## Retrieving pk only
+            key_only = True
+            qs.page_items = [pk async for pk in qs.all().values_list(key, flat=True)[:limit + 1]]
+        
+        if len(qs.page_items) > limit:
+            extra_item = qs.page_items.pop()
+            qs.page_next_key = (
+                getattr(extra_item, key) if not key_only else extra_item
+            )
+        else:
+            qs.page_next_key = None
+        
+        ## If should count total
+        if count:
+            qs_cnt = qs_base.all()
+            get_sql_str = sync_to_async(lambda q: str(q.query))
+            sql_str = await get_sql_str(qs_cnt)
+            query_hash = hashlib.md5(sql_str.encode('utf-8')).hexdigest()
+            cache_key = f'count-{query_hash}'
+            total_count_cached = await cache.aget(cache_key)
+            if total_count_cached is None:
+                qs.page_total_count = await qs_cnt.acount()
+                await cache.aset(cache_key, qs.page_total_count, 60 * 60 * 24)
+            else:
+                qs.page_total_count = total_count_cached
+        else:
+            qs.page_total_count = -1
+        
+        if len(qs.page_items):
+            if values:
+                qs.page_first_item = getattr(qs.page_items[0], key, None)
+            else:
+                qs.page_first_item = qs.page_items[0]
+        else:
+            qs.page_first_item = None
+        
+        qs.page_prev_key = prev_key
+        qs.page_n = page
+        qs.page_limit = limit
+        qs.page_order = order
+        qs.page_key = key
+        qs.page_values = values
+        qs.qs_base = qs_base
+        return qs
+    
+    async def set_filter(self, *args, **kwargs):
+        ## Async in case of we may want do additional query.
         self.query_filter = {}
         return self.query_filter
     
@@ -1343,6 +1467,16 @@ class OrderedItemsView(View):
         else:
             qs = self.models.objects.all()
         
+        ## If should count total.
+        count_total = (self.count_total is None and is_json_request(self.request)) or self.count_total
+        
+        if self.apply_new_pagination:
+            return await self.apply_pagination(
+                qs=qs, page=page, limit=self.limit, order=self.order,
+                key=self.order_by, values=self.pagination_values,
+                count=self.count_total, scan_limit=self.table_scan_limit
+            )
+        
         qs_prev_page = None
         ## Getting total count
         get_sql_str = sync_to_async(lambda q: str(q.query))
@@ -1351,7 +1485,7 @@ class OrderedItemsView(View):
         cache_key = f'count-{query_hash}'
         totalCount = await cache.aget(cache_key)
         if totalCount is None:
-            if is_json_request(self.request) or self.countTotal:
+            if count_total:
                 totalCount = await qs.acount()
                 await cache.aset(cache_key, totalCount, 60 * 60 * 24)
             else:
@@ -1399,11 +1533,15 @@ class OrderedItemsView(View):
         return qs
     
     async def get(self, request, *args, **kwargs):
+        if self.apply_new_pagination:
+            ## New version is used
+            return await self.get_paginated(request, *args, **kwargs)
+        
         if not await self.allowed():
             raise PermissionDenied
         
         self.items = [] ## resetting, otherwise it collects from other requests
-        self.set_filter(request, *args, **kwargs)
+        await self.set_filter(request, *args, **kwargs)
         qs = await self.get_queryset()
         data = {
             'type': 'OrderedCollection',
@@ -1477,6 +1615,74 @@ class OrderedItemsView(View):
         
         return render(request, self.template, data)
     
+    async def get_paginated(self, request, *args, **kwargs):
+        '''
+        New version of get(), will replace in the future.
+        '''
+        if not await self.allowed():
+            raise PermissionDenied
+        
+        self.items = [] ## resetting, otherwise it collects from other requests
+        await self.set_filter(request, *args, **kwargs)
+        qs = await self.get_queryset()
+        
+        data = {
+            'type': 'OrderedCollection',
+            'totalItems': qs.page_total_count
+        }
+        uri = self.get_request_url(request, True)
+        
+        # stderrlog('DEBUG', 'QS:', qs.query.__str__())
+        
+        ## No particular page is requested
+        if not qs.page_n:
+            data['id'] = uri
+            if qs.page_first_item:
+                data['first'] = update_url(uri, {'page': qs.page_first_item})
+                
+                ## If showing html page
+                if not is_json_request(request):
+                    return redirect(data['first'])
+        ## Particular page is requested
+        else:
+            data['id'] = uri
+            data['type'] = 'OrderedCollectionPage'
+            data['partOf'] = update_url(uri, {'page': None})
+            data['orderedItems'] = []
+            ids = []
+            
+            for _item in qs.page_items:
+                ids.append(_item.pk)
+                self.items.append(_item)
+                _item = await self.object_to_dict(_item, self.select)
+                ## If dict contains just one value,
+                ## we unwrap that value from dict.
+                ## Usually it's just an URI.
+                if len(_item) == 1:
+                    _item = tuple(_item.values())[0]
+                
+                if type(_item) is dict and is_json_request(request):
+                    from .middleware import remove_private_properties
+                    _item = remove_private_properties(_item)
+                
+                data['orderedItems'].append(_item)
+            
+            if qs.page_next_key:
+                data['next'] = update_url(uri, {'page': qs.page_next_key})
+            if qs.page_prev_key:
+                data['prev'] = update_url(uri, {'page': qs.page_prev_key})
+        
+        data = await self.postprocess(request, data)
+        
+        if is_json_request(request):
+            return ActivityResponse(data, request)
+        
+        data['pageTitle'] = self.pageTitle
+        data['pageClass'] = self.pageClass
+        data['pageDescription'] = self.pageDescription
+        
+        return render(request, self.template, data)
+    
     async def postprocess(self, request, data):
         '''Postprocess for tempaltes.'''
         
@@ -1538,11 +1744,11 @@ class Followers(OrderedItemsView):
     model = Follower
     select = ('uri',)
     template = 'messy/fediverse/followers.html'
-    countTotal = True
+    count_total = True
     pageTitle = 'Followers'
     pageDescription = 'People who follow you.'
     
-    def set_filter(self, request, *args, **kwargs):
+    async def set_filter(self, request, *args, **kwargs):
         fediverseUser = fediverse_factory(request)
         self.query_filter = {
             'disabled': False,
@@ -1590,11 +1796,11 @@ class Blockers(OrderedItemsView):
     model = Activity
     select = ('uri',)
     template = 'messy/fediverse/followers.html'
-    countTotal = True
+    count_total = True
     pageTitle  = 'Blockers'
     pageDescription = 'People who block you.'
     
-    def set_filter(self, request, *args, **kwargs):
+    async def set_filter(self, request, *args, **kwargs):
         fediverseUser = fediverse_factory(request)
         self.query_filter = Q(
             ~Exists(self.model.objects.filter(
@@ -1652,7 +1858,7 @@ class Outbox(OrderedItemsView):
     pageTitle = 'Local Posts'
     pageClass = 'messy-fediverse-page-posts'
     
-    def set_filter(self, request, *args, **kwargs):
+    async def set_filter(self, request, *args, **kwargs):
         fediverseUser = fediverse_factory(request)
         q_params = {}
         if request.GET.get('noreplies'):
@@ -1906,7 +2112,7 @@ class GlobalFeed(OrderedItemsView):
     pageClass = 'messy-fediverse-page-global_feed'
     # pageClass = 'messy-fediverse-page-threads'
     
-    def set_filter(self, request, *args, **kwargs):
+    async def set_filter(self, request, *args, **kwargs):
         q_params = {}
         
         self.query_filter = Q(
@@ -2045,7 +2251,7 @@ class HighlightsFeed(OrderedItemsView):
     pageTitle = 'Hightlights'
     pageClass = 'messy-fediverse-page-highlights'
     
-    def set_filter(self, request, *args, **kwargs):
+    async def set_filter(self, request, *args, **kwargs):
         q_params = {}
         
         self.query_filter = (
@@ -2083,6 +2289,65 @@ class HighlightsFeed(OrderedItemsView):
             return True
         
         return False
+
+class UnansweredFeedView(OrderedItemsView):
+    '''
+    Global posts liked by us.
+    '''
+    model = Activity
+    template = 'messy/fediverse/replies.html'
+    pageTitle = 'Unanswered'
+    pageDescription = 'Abandoned dialogs in threads.'
+    pageClass = 'messy-fediverse-page-unanswered'
+    apply_new_pagination = True
+    count_total = False
+    table_scan_limit = 5000
+    
+    async def set_filter(self, request, *args, **kwargs):
+        fediverse_actor = fediverse_factory(request)
+        
+        try:
+            page = int(self.request.GET.get('page', 0))
+        except:
+            page = 0
+        
+        self.query_filter = Q(
+            ## No Delete activity for this activity
+            # ~Exists(self.model.objects.filter(
+            #     ~Q(uri__istartswith=fediverse_actor.id),
+            #     activity_type='DEL',
+            #     object_uri=OuterRef('uri')
+            # )),
+            ## We not answered it yet
+            ~Exists(self.model.objects.filter(
+                activity_type__in=('CRE', 'UPD'),
+                uri__istartswith=fediverse_actor.id,
+                context=OuterRef('context'),
+                in_reply_to_uri=OuterRef('object_uri'),
+                pk__gt=OuterRef('pk')
+                
+            )),
+            ## Skip our activities
+            ~Q(uri__istartswith=fediverse_actor.id),
+            ## Skip old versions
+            Q(updated_by_activity_uri__isnull=True) | Q(updated_by_activity_uri=''),
+            disabled=False,
+            activity_type__in=('CRE', 'UPD'),
+            ## Answers to us
+            in_reply_to_uri__istartswith=fediverse_actor.id,
+        )
+        
+        return self.query_filter
+    
+    async def allowed(self):
+        if is_json_request(self.request):
+            return True
+        
+        if await request_user_is_authenticated(self.request):
+            return True
+        
+        return False
+
 
 class ListsIndex(View):
     '''

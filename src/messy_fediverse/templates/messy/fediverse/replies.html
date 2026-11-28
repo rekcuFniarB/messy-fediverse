@@ -13,7 +13,7 @@
     class="section-metadata"
     data-path="{{ request.path }}">
 {
-    "title": "{{ summary|escapejs }}",
+    "title": "{% firstof summary pageTitle '' as raw_title %}{{ raw_title|escapejs }}",
     "pageClass": "{{ pageClass|escapejs }}"
 }
 </script>
@@ -47,6 +47,13 @@
         {{ form.as_p }}
         <p><input type="submit" value="New comment"></p>
     </form>
+    {% endif %}
+    
+    {% if pageTitle %}
+    <h2>{{ pageTitle }}</h2>
+    {% endif %}
+    {% if pageDescription %}
+    <p><small>{{ pageDescription }}</small></p>
     {% endif %}
     
     {% if original_thread_url %}

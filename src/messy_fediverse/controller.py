@@ -1275,7 +1275,6 @@ class OrderedItemsView(View):
     items = []
     ## If should count total items for html output
     count_total = None
-    apply_new_pagination = False
     pagination_values = ['*']
     ## used to avoid full table scan
     table_scan_limit = 0
@@ -1460,7 +1459,7 @@ class OrderedItemsView(View):
         
         if type(self.query_filter) is dict:
             qs = self.model.objects.filter(**self.query_filter)
-        elif type(self.query_filter) is list:
+        elif type(self.query_filter) is list or type(self.query_filter) is tuple:
             qs = self.model.objects.filter(*self.query_filter)
         elif isinstance(self.query_filter, Q):
             qs = self.model.objects.filter(self.query_filter)
@@ -1470,152 +1469,13 @@ class OrderedItemsView(View):
         ## If should count total.
         count_total = (self.count_total is None and is_json_request(self.request)) or self.count_total
         
-        if self.apply_new_pagination:
-            return await self.apply_pagination(
-                qs=qs, page=page, limit=self.limit, order=self.order,
-                key=self.order_by, values=self.pagination_values,
-                count=self.count_total, scan_limit=self.table_scan_limit
-            )
-        
-        qs_prev_page = None
-        ## Getting total count
-        get_sql_str = sync_to_async(lambda q: str(q.query))
-        sql_str = await get_sql_str(qs)
-        query_hash = hashlib.md5(sql_str.encode('utf-8')).hexdigest()
-        cache_key = f'count-{query_hash}'
-        totalCount = await cache.aget(cache_key)
-        if totalCount is None:
-            if count_total:
-                totalCount = await qs.acount()
-                await cache.aset(cache_key, totalCount, 60 * 60 * 24)
-            else:
-                ## Not used on html pages
-                totalCount = -1
-        
-        if page:
-            ## Pagination
-            ## (1235, "This version of MariaDB doesn't yet support 'LIMIT & IN/ALL/ANY/SOME subquery'")
-            # qs_prev_page_sub = (qs.all()
-            #     .filter(pk__gt=page)
-            #     .order_by('pk')[:self.limit]
-            # )
-            # qs_prev_page = (qs.all()
-            #     .filter(pk__in=qs_prev_page_sub)
-            #     .order_by('pk')
-            # )
-            
-            if self.order == 'desc':
-                qs_prev_page = (qs.all()
-                    .filter(pk__gt=page)
-                    .order_by('pk')
-                    [:self.limit]
-                )
-                qs = qs.filter(pk__lte=page)
-            else:
-                qs_prev_page = (qs.all()
-                    .filter(pk__lt=page)
-                    .order_by('-pk')
-                    [:self.limit]
-                )
-                qs = qs.filter(pk__gte=page)
-        
-        if self.order == 'desc':
-            qs = qs.order_by('-pk')
-        else:
-            qs = qs.order_by('pk')
-        
-        ## Applying limit
-        qs = qs[0:self.limit+1]
-        qs.totalCount = totalCount
-        qs.query_hash = query_hash
-        qs.prev_page = qs_prev_page
-        
-        return qs
+        return await self.apply_pagination(
+            qs=qs, page=page, limit=self.limit, order=self.order,
+            key=self.order_by, values=self.pagination_values,
+            count=count_total, scan_limit=self.table_scan_limit
+        )
     
     async def get(self, request, *args, **kwargs):
-        if self.apply_new_pagination:
-            ## New version is used
-            return await self.get_paginated(request, *args, **kwargs)
-        
-        if not await self.allowed():
-            raise PermissionDenied
-        
-        self.items = [] ## resetting, otherwise it collects from other requests
-        await self.set_filter(request, *args, **kwargs)
-        qs = await self.get_queryset()
-        data = {
-            'type': 'OrderedCollection',
-            'totalItems': qs.totalCount
-        }
-        uri = self.get_request_url(request, True)
-        
-        # stderrlog('DEBUG', 'QS:', qs.query.__str__())
-        
-        try:
-            page = int(request.GET.get('page', 0))
-        except:
-            page = 0
-        
-        if not page:
-            data['id'] = uri
-            firstItem = await qs.afirst()
-            if firstItem:
-                data['first'] = update_url(uri, {'page': firstItem.pk})
-                
-                ## If showing html page
-                if not is_json_request(request):
-                    return redirect(data['first'])
-        else:
-            data['id'] = uri
-            data['type'] = 'OrderedCollectionPage'
-            data['partOf'] = update_url(uri, {'page': None})
-            data['orderedItems'] = []
-            ids = []
-            
-            async for _item in qs:
-                ids.append(_item.pk)
-                self.items.append(_item)
-                _item = await self.object_to_dict(_item, self.select)
-                ## If dict contains just one value,
-                ## we unwrap that value from dict.
-                ## Usually it's just an URI.
-                if len(_item) == 1:
-                    _item = tuple(_item.values())[0]
-                
-                if type(_item) is dict and is_json_request(request):
-                    from .middleware import remove_private_properties
-                    _item = remove_private_properties(_item)
-                
-                data['orderedItems'].append(_item)
-            
-            if len(data['orderedItems']) > self.limit:
-                ## we have one extra item
-                nextPageItem = data['orderedItems'].pop()
-                nextPageId = ids.pop()
-                self.items.pop()
-                ## Has next page
-                data['next'] = update_url(uri, {'page': nextPageId})
-            
-            prev_page = None
-            if hasattr(qs, 'prev_page') and type(qs.prev_page) is not None:
-                async for p in qs.prev_page.values_list('pk', flat=True):
-                    prev_page = p
-                
-                if prev_page:
-                    data['prev'] = update_url(uri, {'page': prev_page})
-        
-        data = await self.postprocess(request, data)
-        
-        if is_json_request(request):
-            return ActivityResponse(data, request)
-        
-        data['pageTitle'] = self.pageTitle
-        data['pageClass'] = self.pageClass
-        data['pageDescription'] = self.pageDescription
-        
-        return render(request, self.template, data)
-    
-    async def get_paginated(self, request, *args, **kwargs):
         '''
         New version of get(), will replace in the future.
         '''
@@ -1632,7 +1492,7 @@ class OrderedItemsView(View):
         }
         uri = self.get_request_url(request, True)
         
-        # stderrlog('DEBUG', 'QS:', qs.query.__str__())
+        # stderrlog('LOG', 'QS:', qs.query.__str__())
         
         ## No particular page is requested
         if not qs.page_n:
@@ -1794,7 +1654,7 @@ class Followers(OrderedItemsView):
 
 class Blockers(OrderedItemsView):
     model = Activity
-    select = ('uri',)
+    select = ('actor',)
     template = 'messy/fediverse/followers.html'
     count_total = True
     pageTitle  = 'Blockers'
@@ -1857,27 +1717,31 @@ class Outbox(OrderedItemsView):
     template = 'messy/fediverse/replies.html'
     pageTitle = 'Local Posts'
     pageClass = 'messy-fediverse-page-posts'
+    table_scan_limit = 10000
     
     async def set_filter(self, request, *args, **kwargs):
         fediverseUser = fediverse_factory(request)
-        q_params = {}
+        q_params = {'updated_by_activity_uri': ''}
+        
         if request.GET.get('noreplies'):
             ## where context equals object_uri,
             ## e.g. initial posts
             q_params['context'] = F('object_uri')
         
         self.query_filter = Q(
-            Q(activity_type='CRE') | Q(activity_type='ANN'),
             ## Ignore deleted, e.g.
             ## there are no acvitities with
             ## 'Delete' type.
             ~Exists(self.model.objects.filter(
                 activity_type='DEL',
+                pk__gt=OuterRef('pk'),
                 object_uri=OuterRef('object_uri')
             )),
+            activity_type__in=('CRE', 'ANN', 'UPD'),
             disabled=False,
             incoming=False,
-            actor_uri=fediverseUser.id,
+            uri__istartswith=fediverseUser.id,
+            # actor_uri=fediverseUser.id,
             **q_params
         )
         
@@ -1942,16 +1806,19 @@ class Outbox(OrderedItemsView):
                 # Exists(qs_sub),
                 ## Non starting posts
                 ~Q(object_uri=F('context')),
-                activity_type='CRE',
+                activity_type__in=('CRE', 'UPD'),
                 disabled=False,
                 incoming=False,
-                actor_uri=fediverseUser.id,
+                ## Ours
+                uri__istartswith=fediverseUser.id,
+                # actor_uri=fediverseUser.id,
                 **q_params
             )
         
         thread_context = request.GET.get('thread')
         if thread_context:
             self.order = 'asc'
+            self.table_scan_limit = 0
             
             # qs_context = self.model.objects.filter(
             #     pk=thread_id,
@@ -1967,7 +1834,7 @@ class Outbox(OrderedItemsView):
                     object_uri=OuterRef('object_uri')
                 )),
                 disabled=False,
-                activity_type='CRE',
+                activity_type__in=('CRE', 'UPD'),
                 context=thread_context,
                 **q_params
             )
@@ -1978,12 +1845,17 @@ class Outbox(OrderedItemsView):
         if is_json_request(self.request):
             return True
         
+        if await request_user_is_staff(self.request):
+            return True
+        
         if not is_same_site_referer(self.request):
             return False
         
         return True
     
     async def postprocess(self, request, data):
+        ## FIXME probably OrderedCollectionPage does not expect
+        ## 'Update' activity types
         if is_json_request(request):
             return data
         
@@ -2002,36 +1874,6 @@ class Outbox(OrderedItemsView):
                 
                 if 'replies' not in apobject:
                     apobject['replies'] = reversepath('replies', urlparse(apobject['id']).path)
-        
-        ## Checking for updated activities
-        subq = (
-            self.model.objects.filter(
-                object_uri__in=by_object_uri.keys(),
-                # incoming=False,
-                disabled=False,
-                activity_type='UPD'
-            )
-            .values('object_uri')
-            .annotate(max_id=DbMax('pk'))
-            .values('max_id')
-        )
-        updated_activities_qs = Activity.objects.filter(pk__in=subq)
-        
-        async for _item in updated_activities_qs:
-            _item = await self.object_to_dict(_item, self.select)
-            ## I don't remember the purpose of it
-            if len(_item) == 1:
-                _item = tuple(_item.values())[0]
-            
-            apobject = _item.get('object')
-            if type(apobject) is dict:
-                uri = apobject.get('id')
-                if uri and uri in by_object_uri:
-                    ## Setting updated item we found
-                    old = data['orderedItems'][by_object_uri[uri]].get('object')
-                    apobject['published'] = old.get('published') or apobject.get('published')
-                    apobject['replies'] = old.get('replies') or apobject.get('replies')
-                    data['orderedItems'][by_object_uri[uri]] = _item
         
         first_item = None
         
@@ -2122,15 +1964,17 @@ class GlobalFeed(OrderedItemsView):
             ## 'Delete' type.
             ~Exists(self.model.objects.filter(
                 activity_type='DEL',
-                object_uri=OuterRef('object_uri')
+                object_uri=OuterRef('object_uri'),
+                pk__gt=OuterRef('pk')
             )),
             ## Excluding older objects if
             ## there are updated ones.
             ## (e.g. we keep last one)
-            ~Exists(self.model.objects.filter(
-                object_uri=OuterRef('object_uri'),
-                pk__gt=OuterRef('pk')
-            )),
+            # ~Exists(self.model.objects.filter(
+            #     object_uri=OuterRef('object_uri'),
+            #     pk__gt=OuterRef('pk')
+            # )),
+            Q(updated_by_activity_uri='') | Q(updated_by_activity_uri__isnull=True),
             (
                 ## inReplyTo is null
                 Q(activity_data__object__inReplyTo=None)
@@ -2250,10 +2094,9 @@ class HighlightsFeed(OrderedItemsView):
     template = 'messy/fediverse/replies.html'
     pageTitle = 'Hightlights'
     pageClass = 'messy-fediverse-page-highlights'
+    table_scan_limit = 5000
     
     async def set_filter(self, request, *args, **kwargs):
-        q_params = {}
-        
         self.query_filter = (
             Q(
                 Q(activity_type='CRE') | Q(activity_type='UPD'),
@@ -2262,21 +2105,22 @@ class HighlightsFeed(OrderedItemsView):
                 # object_type='Note',
                 disabled=False,
                 incoming=True,
-                **q_params
-            )
+            ),
             ## Ignore deleted, e.g.
             ## there are no acvitities with
             ## 'Delete' type.
-            & ~Exists(self.model.objects.filter(
+            ~Exists(self.model.objects.filter(
                 activity_type='DEL',
                 object_uri=OuterRef('object_uri')
-            ))
+            )),
             ## Select objects liked or announced by us
-            & Exists(self.model.objects.filter(
+            Exists(self.model.objects.filter(
                 Q(activity_type='LKE') | Q(activity_type='ANN'),
                 object_uri=OuterRef('object_uri'),
                 incoming=False,
-            ))
+                pk__gte=OuterRef('pk') - self.table_scan_limit,
+                pk__lte=OuterRef('pk') + self.table_scan_limit,
+            )),
         )
         
         return self.query_filter
@@ -2299,7 +2143,6 @@ class UnansweredFeedView(OrderedItemsView):
     pageTitle = 'Unanswered'
     pageDescription = 'Abandoned dialogs in threads.'
     pageClass = 'messy-fediverse-page-unanswered'
-    apply_new_pagination = True
     count_total = False
     table_scan_limit = 5000
     

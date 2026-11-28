@@ -27,6 +27,7 @@ urlpatterns = [
     path('status/<path:rpath>/', controller.Status.as_view(), name='status'),
     path('replies/<path:rpath>/', controller.Replies.as_view(), name='replies'),
     path('replies<path:rpath>', controller.Replies.as_view(), name='replies_slashed_url'),
+    path('unanswered/', controller.UnansweredFeedView.as_view(), name='unanswered'),
     path('<path:rpath>/', controller.dumb, name='dumb')
 ]
 
